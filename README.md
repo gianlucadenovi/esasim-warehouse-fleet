@@ -14,7 +14,7 @@ An [EsaSim](https://esacode.com/) project of the workspace Gianluca De Novi's wo
 ## Workspace blocks it uses
 
 - [Warehouse models](blocks/ws-warehouse-models) · version 1
-- [Warehouse fleet](blocks/ws-warehouse-fleet) · version 4
+- [Warehouse fleet](blocks/ws-warehouse-fleet) · version 5
 - [Fleet-size sweep](blocks/ws-fleet-size-sweep) · version 3
 - [Fleet sweep view](blocks/ws-fleet-sweep-view) · version 1
 
