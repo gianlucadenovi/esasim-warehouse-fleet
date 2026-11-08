@@ -11,7 +11,7 @@
         {
             "name": "1 · Live warehouse",
             "file": "blueprints/1-live-warehouse.json",
-            "published_version": 1,
+            "published_version": 2,
             "nodes": 5
         },
         {
@@ -25,6 +25,12 @@
             "file": "blueprints/3-same-code-any-accelerator-cpu-vs-gpu-vs-tenstorrent.json",
             "published_version": 0,
             "nodes": 4
+        },
+        {
+            "name": "4 · On Tenstorrent",
+            "file": "blueprints/4-on-tenstorrent.json",
+            "published_version": 0,
+            "nodes": 5
         }
     ],
     "blocks": [

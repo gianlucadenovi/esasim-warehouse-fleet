@@ -1,0 +1,130 @@
+{
+    "esasim": {
+        "kind": "blueprint",
+        "flow_id": 13
+    },
+    "name": "4 · On Tenstorrent",
+    "description": "The live warehouse and the sweep with Accelerator set to Tenstorrent: routes planned on the Tensix cores with TT-NN. Needs a Linux machine with Tenstorrent cards.",
+    "published_version": 0,
+    "updated": "2026-11-08 01:10:40",
+    "graph": {
+        "nodes": [
+            {
+                "id": "models",
+                "type": "ws-warehouse-models",
+                "x": 0,
+                "y": 0,
+                "params": [],
+                "title": "Warehouse models"
+            },
+            {
+                "id": "fleet",
+                "type": "ws-warehouse-fleet",
+                "x": 380,
+                "y": 0,
+                "params": {
+                    "robots": 24,
+                    "order_rate": 900,
+                    "speed": "2",
+                    "minutes": 20,
+                    "accelerator": "Tenstorrent",
+                    "stations": 6,
+                    "rack_pairs": 9,
+                    "pick_s": 6,
+                    "station_s": 8,
+                    "seed": 1
+                },
+                "title": "Warehouse fleet on Tenstorrent"
+            },
+            {
+                "id": "view",
+                "type": "ws-warehouse-view",
+                "x": 780,
+                "y": 0,
+                "params": {
+                    "quality": "high",
+                    "routes": true,
+                    "heat": false,
+                    "camera": "orbit",
+                    "delay": 2.5
+                },
+                "title": "Warehouse in 3D"
+            },
+            {
+                "id": "sweep",
+                "type": "ws-fleet-size-sweep",
+                "x": 380,
+                "y": 360,
+                "params": {
+                    "fleets": "5-50/5",
+                    "rates": "600,900,1200,1500",
+                    "seeds": 3,
+                    "hours": 1,
+                    "warmup_min": 10,
+                    "robot_cost_h": 2.5,
+                    "accelerator": "Tenstorrent",
+                    "seed": 1
+                },
+                "title": "Sweep on Tenstorrent"
+            },
+            {
+                "id": "sweep_view",
+                "type": "ws-fleet-sweep-view",
+                "x": 780,
+                "y": 360,
+                "params": [],
+                "title": "How many robots? (Tenstorrent)"
+            }
+        ],
+        "edges": [
+            {
+                "id": "models.models>fleet.kit",
+                "from": {
+                    "node": "models",
+                    "port": "models"
+                },
+                "to": {
+                    "node": "fleet",
+                    "port": "kit"
+                }
+            },
+            {
+                "id": "models.models>view.models",
+                "from": {
+                    "node": "models",
+                    "port": "models"
+                },
+                "to": {
+                    "node": "view",
+                    "port": "models"
+                }
+            },
+            {
+                "id": "fleet.telemetry>view.live",
+                "from": {
+                    "node": "fleet",
+                    "port": "telemetry"
+                },
+                "to": {
+                    "node": "view",
+                    "port": "live"
+                }
+            },
+            {
+                "id": "sweep.telemetry>sweep_view.data",
+                "from": {
+                    "node": "sweep",
+                    "port": "telemetry"
+                },
+                "to": {
+                    "node": "sweep_view",
+                    "port": "data"
+                }
+            }
+        ],
+        "notes": [],
+        "dash": {
+            "items": []
+        }
+    }
+}
