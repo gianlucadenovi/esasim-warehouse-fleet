@@ -2,13 +2,13 @@
 
 A goods-to-person warehouse with up to 50 mobile robots, simulated live on the CPU, an NVIDIA GPU or Tenstorrent cards; the view changes orders, robots and aisles while it runs.
 
-Runs a warehouse live for Minutes: orders arrive (Order rate), idle robots take them, drive along one-way aisles to the pick face, wait while the item goes into their tote, carry it to the least busy pick station, and go back to their dock. Routes come from distance fields of every target, computed on the machine's accelerator by wavefront relaxation, and again whenever an aisle is blocked. Accelerator auto uses Tenstorrent cards when the machine has them (PyTorch/XLA, TT-Forge's tt-xla), else an NVIDIA GPU, else the CPU; naming one makes the block stop if it is not there. Live telemetry: layout (the warehouse), fleet (every robot at every step, compact), kpi (orders per hour, order time, robots busy, orders waiting), heat (where robots wait) and event. Connect its telemetry to the Warehouse view, which draws it in 3D and sends back the controls: order rate, robots, speed, pause, block an aisle. Results: kpis.json, timeline.csv and events.json, warehouse.json.
+Runs a warehouse live for Minutes: orders arrive (Order rate), idle robots take them, drive along one-way aisles to the pick face, wait while the item goes into their tote, carry it to the least busy pick station, and go back to their dock. Routes come from distance fields of every target, computed on the machine's accelerator, and again whenever an aisle is blocked. Accelerator: CPU and NVIDIA GPU run everything with PyTorch; Tenstorrent plans the routes on the cards with TT-NN (Tensix tile matmuls), and runs the robots' steps on the cards too when PyTorch/XLA for Tenstorrent (tt-xla) is installed, else on the CPU beside them. The Linux machine with the cards needs TT-NN in the worker's Python (pip install ttnn, the version of the cards' firmware). auto uses Tenstorrent cards when the machine has them, else an NVIDIA GPU, else the CPU; naming one makes the block stop if it is not there. Live telemetry: layout, fleet (every robot at every step, compact), kpi, heat and event, for the Warehouse view, which sends back the controls: order rate, robots, speed, pause, block an aisle. Results: kpis.json, timeline.csv and events.json, warehouse.json.
 
 An [EsaSim](https://esacode.com/) blueprint block: it runs on a machine, in Python (`backend.py`, `def run(ctx)`).
 
 | | |
 |---|---|
-| Block | `ws-warehouse-fleet` · version 1 |
+| Block | `ws-warehouse-fleet` · version 2 |
 | Workspace | Gianluca De Novi's workspace |
 | Author | Gianluca De Novi |
 | Runs on | Any machine, NVIDIA GPU, Tenstorrent |
