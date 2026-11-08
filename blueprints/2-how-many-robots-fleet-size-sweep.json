@@ -6,22 +6,26 @@
     "name": "2 · How many robots? (fleet-size sweep)",
     "description": "Hundreds of fleet-size × order-rate scenarios at once: throughput and cost per order against the fleet.",
     "published_version": 1,
-    "updated": "2026-11-08 04:18:45",
+    "updated": "2026-11-08 05:06:07",
     "graph": {
         "nodes": [
             {
                 "id": "sweep",
-                "type": "ws-fleet-size-sweep",
+                "type": "fleet-size-sweep",
                 "x": 0,
                 "y": 0,
                 "params": {
-                    "fleets": "10-60/10",
-                    "rates": "300,500,700,900",
+                    "fleets": "20-60/10",
+                    "rates": "200,300,400,500",
                     "seeds": 3,
                     "hours": 2,
                     "warmup_min": 10,
                     "robot_cost_h": 2.5,
                     "accelerator": "auto",
+                    "inbound": 4,
+                    "levels": 3,
+                    "fill": 70,
+                    "load_s": 6,
                     "seed": 1
                 },
                 "title": "Fleet-size sweep"

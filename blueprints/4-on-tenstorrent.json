@@ -6,7 +6,7 @@
     "name": "4 · On Tenstorrent",
     "description": "The live warehouse and the sweep with Accelerator set to Tenstorrent: routes planned on the Tensix cores with TT-NN. Needs a Linux machine with Tenstorrent cards.",
     "published_version": 0,
-    "updated": "2026-11-08 04:20:16",
+    "updated": "2026-11-08 05:06:16",
     "graph": {
         "nodes": [
             {
@@ -19,12 +19,13 @@
             },
             {
                 "id": "fleet",
-                "type": "ws-warehouse-fleet",
+                "type": "warehouse-fleet",
                 "x": 380,
                 "y": 0,
                 "params": {
-                    "robots": 40,
-                    "order_rate": 400,
+                    "robots": 50,
+                    "order_rate": 300,
+                    "inbound_rate": 0,
                     "speed": "2",
                     "minutes": 20,
                     "accelerator": "Tenstorrent",
@@ -40,19 +41,19 @@
                 "params": {
                     "environment": "studio",
                     "quality": "high",
-                    "controls": "slider order_rate 0 1500 400 25\nslider robots 1 60 40\nselect speed 1,2,4,8\nswitch paused\npick block_aisle\nbutton Open all aisles",
+                    "controls": "slider order_rate 0 1500 300 25\nslider inbound_rate 0 3000 510 25\nslider robots 1 60 50\nselect speed 1,2,4,8\nswitch paused\npick block_aisle\nbutton Open all aisles",
                     "routes": true
                 },
                 "title": "Warehouse in 3D"
             },
             {
                 "id": "sweep",
-                "type": "ws-fleet-size-sweep",
+                "type": "fleet-size-sweep",
                 "x": 380,
                 "y": 360,
                 "params": {
-                    "fleets": "10-60/10",
-                    "rates": "300,500,700,900",
+                    "fleets": "20-60/10",
+                    "rates": "200,300,400,500",
                     "seeds": 3,
                     "hours": 1,
                     "warmup_min": 10,

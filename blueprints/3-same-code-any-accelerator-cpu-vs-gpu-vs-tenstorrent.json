@@ -6,17 +6,17 @@
     "name": "3 · Same code, any accelerator (CPU vs GPU vs Tenstorrent)",
     "description": "The same sweep on the CPU and on the GPU side by side; add a Tenstorrent machine for the third.",
     "published_version": 1,
-    "updated": "2026-11-08 04:20:00",
+    "updated": "2026-11-08 05:06:11",
     "graph": {
         "nodes": [
             {
                 "id": "cpu",
-                "type": "ws-fleet-size-sweep",
+                "type": "fleet-size-sweep",
                 "x": 0,
                 "y": -160,
                 "params": {
-                    "fleets": "10-60/10",
-                    "rates": "300,500,700,900",
+                    "fleets": "20-60/10",
+                    "rates": "200,300,400,500",
                     "seeds": 3,
                     "hours": 1,
                     "warmup_min": 10,
@@ -28,12 +28,12 @@
             },
             {
                 "id": "gpu",
-                "type": "ws-fleet-size-sweep",
+                "type": "fleet-size-sweep",
                 "x": 0,
                 "y": 200,
                 "params": {
-                    "fleets": "10-60/10",
-                    "rates": "300,500,700,900",
+                    "fleets": "20-60/10",
+                    "rates": "200,300,400,500",
                     "seeds": 3,
                     "hours": 1,
                     "warmup_min": 10,

@@ -6,18 +6,19 @@
     "name": "5 · Which layout? (same hall, same orders)",
     "description": "Six layouts of the same building with the same robots, the very same orders and incidents: order time, driving, waiting and storage side by side, with a plan of each.",
     "published_version": 1,
-    "updated": "2026-11-08 04:42:52",
+    "updated": "2026-11-08 05:06:21",
     "graph": {
         "nodes": [
             {
                 "id": "layouts",
-                "type": "ws-warehouse-layouts",
+                "type": "warehouse-layouts",
                 "x": 0,
                 "y": 120,
                 "params": {
-                    "layouts": "Today: blocks=5 stations=8\n3 long blocks: blocks=3\n9 short blocks: blocks=9\nStations at both ends: stations_at=both\nRandom slotting: slotting=random\n4 stations: stations=4",
-                    "robots": 40,
-                    "order_rate": 500,
+                    "layouts": "Today: blocks=5 stations=8 inbound=4\n3 long blocks: blocks=3\n9 short blocks: blocks=9\nReceiving and pack-out both south: inbound_at=south\nPack-out at both ends: stations_at=both\nRandom slotting: slotting=random",
+                    "robots": 50,
+                    "order_rate": 350,
+                    "inbound_rate": 0,
                     "seeds": 3,
                     "hours": 2,
                     "warmup_min": 10,
@@ -35,10 +36,10 @@
                 "params": {
                     "kind": "bars",
                     "x": "layout",
-                    "y": "avg_order_s",
-                    "title": "Average order time (s): lower is better"
+                    "y": "avg_order_s,putaway_s",
+                    "title": "Average order and putaway time (s): lower is better"
                 },
-                "title": "Order time by layout"
+                "title": "Order and putaway time by layout"
             },
             {
                 "id": "travel",
@@ -49,7 +50,7 @@
                     "kind": "bars",
                     "x": "layout",
                     "y": "m_per_line",
-                    "title": "Metres driven per item: lower is better"
+                    "title": "Metres driven per package moved: lower is better"
                 },
                 "title": "Driving by layout"
             },

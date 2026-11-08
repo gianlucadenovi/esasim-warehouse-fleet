@@ -11,8 +11,8 @@
         {
             "name": "1 · Live warehouse",
             "file": "blueprints/1-live-warehouse.json",
-            "published_version": 5,
-            "nodes": 5
+            "published_version": 6,
+            "nodes": 6
         },
         {
             "name": "2 · How many robots? (fleet-size sweep)",
@@ -46,24 +46,9 @@
             "name": "Warehouse models"
         },
         {
-            "id": "ws-warehouse-fleet",
-            "version": 5,
-            "name": "Warehouse fleet"
-        },
-        {
-            "id": "ws-fleet-size-sweep",
-            "version": 4,
-            "name": "Fleet-size sweep"
-        },
-        {
             "id": "ws-fleet-sweep-view",
             "version": 1,
             "name": "Fleet sweep view"
-        },
-        {
-            "id": "ws-warehouse-layouts",
-            "version": 1,
-            "name": "Warehouse layouts"
         }
     ]
 }

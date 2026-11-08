@@ -5,8 +5,8 @@
     },
     "name": "1 · Live warehouse",
     "description": "Fifty robots in a goods-to-person warehouse, live in 3D: change orders, robots and aisles while it runs.",
-    "published_version": 5,
-    "updated": "2026-11-08 03:24:31",
+    "published_version": 6,
+    "updated": "2026-11-08 05:26:45",
     "graph": {
         "nodes": [
             {
@@ -19,12 +19,13 @@
             },
             {
                 "id": "fleet",
-                "type": "ws-warehouse-fleet",
+                "type": "warehouse-fleet",
                 "x": 440,
                 "y": 80,
                 "params": {
-                    "robots": 40,
-                    "order_rate": 400,
+                    "robots": 50,
+                    "order_rate": 300,
+                    "inbound_rate": 0,
                     "speed": "2",
                     "minutes": 20,
                     "accelerator": "auto",
@@ -33,8 +34,12 @@
                     "rack_blocks": 5,
                     "rack_len": 8,
                     "stations": 8,
+                    "inbound": 4,
+                    "levels": 3,
+                    "fill": 70,
                     "pick_s": 10,
                     "station_s": 15,
+                    "load_s": 6,
                     "robot_speed": 1.2,
                     "battery_h": 8,
                     "charge_min": 60,
@@ -56,7 +61,7 @@
                 "params": {
                     "environment": "studio",
                     "quality": "high",
-                    "controls": "slider order_rate 0 1500 400 25\nslider robots 1 60 40\nselect speed 1,2,4,8\nswitch paused\npick block_aisle\nbutton Open all aisles",
+                    "controls": "slider order_rate 0 1500 300 25\nslider inbound_rate 0 3000 510 25\nslider robots 1 60 50\nselect speed 1,2,4,8\nswitch paused\npick block_aisle\nbutton Open all aisles",
                     "routes": true
                 },
                 "title": "Warehouse in 3D"
@@ -81,11 +86,24 @@
                 "params": {
                     "kind": "line",
                     "x": "t",
-                    "y": "orders_h,backlog,charging",
+                    "y": "orders_h,stored_h,backlog,inbound_waiting",
                     "channel": "kpi",
-                    "title": "Orders per hour (last 10 min), orders waiting, robots charging"
+                    "title": "Orders and packages stored per hour, orders and deliveries waiting"
                 },
-                "title": "Orders per hour and orders waiting"
+                "title": "In and out per hour"
+            },
+            {
+                "id": "timeline",
+                "type": "timeline-view",
+                "x": 1160,
+                "y": 520,
+                "params": {
+                    "values": "",
+                    "events_channel": "event",
+                    "totals": "",
+                    "title": "How the run went"
+                },
+                "title": "Run timeline"
             }
         ],
         "edges": [
@@ -143,6 +161,17 @@
                     "node": "chart",
                     "port": "data"
                 }
+            },
+            {
+                "id": "fleet.telemetry>timeline.data",
+                "from": {
+                    "node": "fleet",
+                    "port": "telemetry"
+                },
+                "to": {
+                    "node": "timeline",
+                    "port": "data"
+                }
             }
         ],
         "notes": [],
@@ -159,6 +188,12 @@
                     "y": 0,
                     "w": 4,
                     "h": 22
+                },
+                "timeline": {
+                    "x": 0,
+                    "y": 22,
+                    "w": 12,
+                    "h": 11
                 }
             }
         }
