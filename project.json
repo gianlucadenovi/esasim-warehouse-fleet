@@ -17,7 +17,7 @@
         {
             "name": "2 · How many robots? (fleet-size sweep)",
             "file": "blueprints/2-how-many-robots-fleet-size-sweep.json",
-            "published_version": 0,
+            "published_version": 1,
             "nodes": 3
         },
         {
