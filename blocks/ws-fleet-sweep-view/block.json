@@ -1,0 +1,30 @@
+{
+    "id": "ws-fleet-sweep-view",
+    "version": "1",
+    "name": "Fleet sweep view",
+    "category": "Visualizers",
+    "icon": "chart",
+    "side": "frontend",
+    "customizable": true,
+    "summary": "How many robots? The fleet-size sweep drawn as it runs: orders per hour and cost per order against the fleet, with the cheapest fleet that keeps up.",
+    "help": "Connect Data to the Fleet-size sweep block's telemetry. While the sweep runs the curves form; at the end: orders per hour delivered against the number of robots (one line per order rate, the demand dashed), robot cost per order, and for each order rate the cheapest fleet that serves at least 98% of the orders, or the most the layout can deliver. The header shows the machine and its speed (robot-steps per second), to compare CPUs, NVIDIA GPUs and Tenstorrent cards.",
+    "inputs": [
+        {
+            "id": "data",
+            "label": "Data",
+            "type": "stream",
+            "many": true,
+            "help": "The Fleet-size sweep block's telemetry"
+        }
+    ],
+    "outputs": [],
+    "params": [],
+    "view": {
+        "w": 6,
+        "h": 7,
+        "resize": "both"
+    },
+    "esasim": {
+        "version": 1
+    }
+}

@@ -1,0 +1,158 @@
+{
+    "id": "ws-warehouse-fleet",
+    "version": "1",
+    "name": "Warehouse fleet",
+    "category": "Simulation",
+    "icon": "bot",
+    "side": "backend",
+    "customizable": true,
+    "summary": "A goods-to-person warehouse with up to 50 mobile robots, simulated live on the CPU, an NVIDIA GPU or Tenstorrent cards; the view changes orders, robots and aisles while it runs.",
+    "help": "Runs a warehouse live for Minutes: orders arrive (Order rate), idle robots take them, drive along one-way aisles to the pick face, wait while the item goes into their tote, carry it to the least busy pick station, and go back to their dock. Routes come from distance fields of every target, computed on the machine's accelerator by wavefront relaxation, and again whenever an aisle is blocked. Accelerator auto uses Tenstorrent cards when the machine has them (PyTorch/XLA, TT-Forge's tt-xla), else an NVIDIA GPU, else the CPU; naming one makes the block stop if it is not there. Live telemetry: layout (the warehouse), fleet (every robot at every step, compact), kpi (orders per hour, order time, robots busy, orders waiting), heat (where robots wait) and event. Connect its telemetry to the Warehouse view, which draws it in 3D and sends back the controls: order rate, robots, speed, pause, block an aisle. Results: kpis.json, timeline.csv and events.json, warehouse.json.",
+    "inputs": [
+        {
+            "id": "kit",
+            "label": "Warehouse models",
+            "type": "files",
+            "optional": true,
+            "formats": [
+                "glb",
+                "json",
+                "txt"
+            ],
+            "help": "From Warehouse models: the run starts once the view has its models"
+        }
+    ],
+    "outputs": [
+        {
+            "id": "kpis",
+            "label": "KPIs",
+            "type": "metrics",
+            "formats": [
+                "json"
+            ],
+            "help": "The run's totals: orders, orders per hour, order time, robots busy"
+        },
+        {
+            "id": "timeline",
+            "label": "Timeline",
+            "type": "table",
+            "formats": [
+                "csv",
+                "json"
+            ],
+            "help": "timeline.csv (every 30 simulated seconds) and events.json (what changed)"
+        },
+        {
+            "id": "layout",
+            "label": "Layout",
+            "type": "files",
+            "formats": [
+                "json"
+            ],
+            "help": "warehouse.json (esasim.warehouse/1)"
+        }
+    ],
+    "params": [
+        {
+            "key": "robots",
+            "label": "Robots at the start",
+            "type": "number",
+            "default": 24,
+            "min": 1,
+            "max": 50
+        },
+        {
+            "key": "order_rate",
+            "label": "Orders per hour at the start",
+            "type": "number",
+            "default": 900,
+            "min": 0,
+            "max": 6000
+        },
+        {
+            "key": "speed",
+            "label": "Simulation speed",
+            "type": "select",
+            "default": "2",
+            "options": [
+                "1",
+                "2",
+                "4",
+                "8"
+            ],
+            "help": "Times real time; the view can change it"
+        },
+        {
+            "key": "minutes",
+            "label": "Minutes it runs",
+            "type": "number",
+            "default": 20,
+            "min": 1,
+            "max": 180,
+            "help": "Real minutes; Stop in the view, or the run's Stop, ends it before"
+        },
+        {
+            "key": "accelerator",
+            "label": "Accelerator",
+            "type": "select",
+            "default": "auto",
+            "options": [
+                "auto",
+                "CPU",
+                "NVIDIA GPU",
+                "Tenstorrent"
+            ],
+            "help": "auto: Tenstorrent cards, else an NVIDIA GPU, else the CPU of the machine that runs it"
+        },
+        {
+            "key": "stations",
+            "label": "Pick stations",
+            "type": "number",
+            "default": 6,
+            "min": 2,
+            "max": 8
+        },
+        {
+            "key": "rack_pairs",
+            "label": "Rack pairs",
+            "type": "number",
+            "default": 9,
+            "min": 4,
+            "max": 14,
+            "help": "Double rows of racks, with one-way aisles between them"
+        },
+        {
+            "key": "pick_s",
+            "label": "Seconds to pick an item",
+            "type": "number",
+            "default": 6,
+            "min": 1,
+            "max": 60
+        },
+        {
+            "key": "station_s",
+            "label": "Seconds at the station",
+            "type": "number",
+            "default": 8,
+            "min": 1,
+            "max": 60
+        },
+        {
+            "key": "seed",
+            "label": "Random seed",
+            "type": "number",
+            "default": 1
+        }
+    ],
+    "hardware": [
+        "cpu",
+        "nvidia",
+        "tenstorrent"
+    ],
+    "packages": [
+        "torch[cuda]"
+    ],
+    "esasim": {
+        "version": 1
+    }
+}

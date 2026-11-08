@@ -1,0 +1,92 @@
+{
+    "esasim": {
+        "kind": "blueprint",
+        "flow_id": 12
+    },
+    "name": "3 · Same code, any accelerator (CPU vs GPU vs Tenstorrent)",
+    "description": "The same sweep on the CPU and on the GPU side by side; add a Tenstorrent machine for the third.",
+    "published_version": 0,
+    "updated": "2026-11-08 00:57:41",
+    "graph": {
+        "nodes": [
+            {
+                "id": "cpu",
+                "type": "ws-fleet-size-sweep",
+                "x": 0,
+                "y": -160,
+                "params": {
+                    "fleets": "5-50/5",
+                    "rates": "600,900,1200,1500",
+                    "seeds": 3,
+                    "hours": 1,
+                    "warmup_min": 10,
+                    "robot_cost_h": 2.5,
+                    "accelerator": "CPU",
+                    "seed": 1
+                },
+                "title": "Sweep on the CPU"
+            },
+            {
+                "id": "gpu",
+                "type": "ws-fleet-size-sweep",
+                "x": 0,
+                "y": 200,
+                "params": {
+                    "fleets": "5-50/5",
+                    "rates": "600,900,1200,1500",
+                    "seeds": 3,
+                    "hours": 1,
+                    "warmup_min": 10,
+                    "robot_cost_h": 2.5,
+                    "accelerator": "NVIDIA GPU",
+                    "seed": 1
+                },
+                "title": "Sweep on the NVIDIA GPU"
+            },
+            {
+                "id": "cpu_view",
+                "type": "ws-fleet-sweep-view",
+                "x": 400,
+                "y": -160,
+                "params": [],
+                "title": "CPU"
+            },
+            {
+                "id": "gpu_view",
+                "type": "ws-fleet-sweep-view",
+                "x": 400,
+                "y": 200,
+                "params": [],
+                "title": "NVIDIA GPU"
+            }
+        ],
+        "edges": [
+            {
+                "id": "cpu.telemetry>cpu_view.data",
+                "from": {
+                    "node": "cpu",
+                    "port": "telemetry"
+                },
+                "to": {
+                    "node": "cpu_view",
+                    "port": "data"
+                }
+            },
+            {
+                "id": "gpu.telemetry>gpu_view.data",
+                "from": {
+                    "node": "gpu",
+                    "port": "telemetry"
+                },
+                "to": {
+                    "node": "gpu_view",
+                    "port": "data"
+                }
+            }
+        ],
+        "notes": [],
+        "dash": {
+            "items": []
+        }
+    }
+}

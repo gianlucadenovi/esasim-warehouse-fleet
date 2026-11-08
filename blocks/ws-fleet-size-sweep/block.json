@@ -1,0 +1,152 @@
+{
+    "id": "ws-fleet-size-sweep",
+    "version": "1",
+    "name": "Fleet-size sweep",
+    "category": "Simulation",
+    "icon": "chart",
+    "side": "backend",
+    "customizable": true,
+    "summary": "How many robots does the warehouse need? Hundreds of fleet-size × order-rate scenarios simulated at once, as one batch on the CPU, an NVIDIA GPU or Tenstorrent cards.",
+    "help": "Simulates every combination of Fleet sizes, Order rates and Seeds in the warehouse of the Warehouse fleet block, for the same simulated hours (after a warm-up), all at once: the robots of all scenarios are one batch of tensors, so a GPU or Tenstorrent cards run hundreds of scenarios in the time a CPU runs a few. Fleet sizes and order rates are lists (5,10,20) or ranges (5-50/5 = from 5 to 50 by 5). For each fleet size and order rate, averaged over the seeds: orders per hour delivered, share of the demand served, average and 95th-percentile order time, robots busy, time spent waiting, orders left waiting, and robot cost per order (Robot cost per hour). Live telemetry (channel sweep) carries the results as they form, for the Fleet sweep view; the results are also in fleet_sweep.csv (one row each), throughput_by_fleet.csv (one column per order rate, for a Chart) and sweep_summary.json (the cheapest fleet that keeps up with each order rate, and the speed of the machine).",
+    "inputs": [],
+    "outputs": [
+        {
+            "id": "results",
+            "label": "Results",
+            "type": "table",
+            "formats": [
+                "csv"
+            ],
+            "help": "fleet_sweep.csv: one row per fleet size and order rate"
+        },
+        {
+            "id": "chart",
+            "label": "For a chart",
+            "type": "table",
+            "formats": [
+                "csv"
+            ],
+            "help": "throughput_by_fleet.csv: orders per hour by fleet size, one column per order rate"
+        },
+        {
+            "id": "summary",
+            "label": "Summary",
+            "type": "metrics",
+            "formats": [
+                "json"
+            ],
+            "help": "Best fleet per order rate, scenarios, time and speed on this machine"
+        }
+    ],
+    "params": [
+        {
+            "key": "fleets",
+            "label": "Fleet sizes",
+            "type": "text",
+            "default": "5-50/5",
+            "help": "Robots: a list (10,20,30) or a range (5-50/5)"
+        },
+        {
+            "key": "rates",
+            "label": "Order rates (orders per hour)",
+            "type": "text",
+            "default": "600,900,1200,1500"
+        },
+        {
+            "key": "seeds",
+            "label": "Seeds per combination",
+            "type": "number",
+            "default": 3,
+            "min": 1,
+            "max": 20,
+            "help": "Each with other random orders; the results are averaged"
+        },
+        {
+            "key": "hours",
+            "label": "Simulated hours",
+            "type": "number",
+            "default": 2,
+            "min": 0.1,
+            "max": 24
+        },
+        {
+            "key": "warmup_min",
+            "label": "Warm-up (simulated minutes, not counted)",
+            "type": "number",
+            "default": 10,
+            "min": 0,
+            "max": 120
+        },
+        {
+            "key": "robot_cost_h",
+            "label": "Robot cost per hour ($)",
+            "type": "number",
+            "default": 2.5,
+            "min": 0,
+            "max": 100,
+            "help": "Lease, energy and upkeep of one robot for an hour of work"
+        },
+        {
+            "key": "accelerator",
+            "label": "Accelerator",
+            "type": "select",
+            "default": "auto",
+            "options": [
+                "auto",
+                "CPU",
+                "NVIDIA GPU",
+                "Tenstorrent"
+            ],
+            "help": "auto: Tenstorrent cards, else an NVIDIA GPU, else the CPU of the machine that runs it"
+        },
+        {
+            "key": "stations",
+            "label": "Pick stations",
+            "type": "number",
+            "default": 6,
+            "min": 2,
+            "max": 8
+        },
+        {
+            "key": "rack_pairs",
+            "label": "Rack pairs",
+            "type": "number",
+            "default": 9,
+            "min": 4,
+            "max": 14
+        },
+        {
+            "key": "pick_s",
+            "label": "Seconds to pick an item",
+            "type": "number",
+            "default": 6,
+            "min": 1,
+            "max": 60
+        },
+        {
+            "key": "station_s",
+            "label": "Seconds at the station",
+            "type": "number",
+            "default": 8,
+            "min": 1,
+            "max": 60
+        },
+        {
+            "key": "seed",
+            "label": "Random seed",
+            "type": "number",
+            "default": 1
+        }
+    ],
+    "hardware": [
+        "cpu",
+        "nvidia",
+        "tenstorrent"
+    ],
+    "packages": [
+        "torch[cuda]"
+    ],
+    "esasim": {
+        "version": 1
+    }
+}

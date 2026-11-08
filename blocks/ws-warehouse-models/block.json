@@ -1,0 +1,39 @@
+{
+    "id": "ws-warehouse-models",
+    "version": "1",
+    "name": "Warehouse models",
+    "category": "Simulation",
+    "icon": "box",
+    "side": "backend",
+    "customizable": true,
+    "summary": "Realistic 3D models for the warehouse demo: textured racks, pallets, desks and the MiR100 mobile robot, as GLB files.",
+    "help": "Downloads once, from GitHub (raw.githubusercontent.com), the warehouse models of AWS RoboMaker's Small Warehouse World (racks with boxes, pallets of goods, a pallet jack, pack desks, a bin; MIT No Attribution licence) and the body of the MiR100 robot from DFKI's mir_robot (BSD-3-Clause). Converts them to GLB (metres, Y-up, textures inside) and keeps them in the worker's data folder (cache/warehouse-kit), so later runs take a second. Gives the GLB files, kit.json (sizes) and LICENSES-warehouse-models.txt. Connect Models to the Warehouse view, and to the Warehouse fleet block so the run starts once the models are ready.",
+    "inputs": [],
+    "outputs": [
+        {
+            "id": "models",
+            "label": "Models",
+            "type": "files",
+            "formats": [
+                "glb",
+                "json",
+                "txt"
+            ],
+            "help": "rack_d/e/f, goods_a/c/d, pallet_jack, desk, bin and amr (the robot) as GLB, kit.json, licences"
+        }
+    ],
+    "params": [],
+    "hardware": [
+        "cpu"
+    ],
+    "packages": [
+        "numpy",
+        "trimesh",
+        "pycollada",
+        "pillow",
+        "scipy"
+    ],
+    "esasim": {
+        "version": 1
+    }
+}

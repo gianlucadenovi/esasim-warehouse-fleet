@@ -1,0 +1,81 @@
+{
+    "esasim": {
+        "kind": "blueprint",
+        "flow_id": 11
+    },
+    "name": "2 · How many robots? (fleet-size sweep)",
+    "description": "Hundreds of fleet-size × order-rate scenarios at once: throughput and cost per order against the fleet.",
+    "published_version": 0,
+    "updated": "2026-11-08 00:57:03",
+    "graph": {
+        "nodes": [
+            {
+                "id": "sweep",
+                "type": "ws-fleet-size-sweep",
+                "x": 0,
+                "y": 0,
+                "params": {
+                    "fleets": "5-50/5",
+                    "rates": "600,900,1200,1500",
+                    "seeds": 3,
+                    "hours": 2,
+                    "warmup_min": 10,
+                    "robot_cost_h": 2.5,
+                    "accelerator": "auto",
+                    "stations": 6,
+                    "rack_pairs": 9,
+                    "pick_s": 6,
+                    "station_s": 8,
+                    "seed": 1
+                },
+                "title": "Fleet-size sweep"
+            },
+            {
+                "id": "view",
+                "type": "ws-fleet-sweep-view",
+                "x": 460,
+                "y": 200,
+                "params": [],
+                "title": "How many robots?"
+            },
+            {
+                "id": "table",
+                "type": "table-view",
+                "x": 460,
+                "y": -120,
+                "params": {
+                    "rows": 50
+                },
+                "title": "All results"
+            }
+        ],
+        "edges": [
+            {
+                "id": "sweep.telemetry>view.data",
+                "from": {
+                    "node": "sweep",
+                    "port": "telemetry"
+                },
+                "to": {
+                    "node": "view",
+                    "port": "data"
+                }
+            },
+            {
+                "id": "sweep.results>table.data",
+                "from": {
+                    "node": "sweep",
+                    "port": "results"
+                },
+                "to": {
+                    "node": "table",
+                    "port": "data"
+                }
+            }
+        ],
+        "notes": [],
+        "dash": {
+            "items": []
+        }
+    }
+}
