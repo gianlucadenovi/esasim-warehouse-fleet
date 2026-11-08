@@ -1,5 +1,5 @@
 # ── EsaSim block ──────────────────────────────────────────────────────
-# Fleet-size sweep (ws-fleet-size-sweep) · version 1 · machine block, Python: def run(ctx)
+# Fleet-size sweep (ws-fleet-size-sweep) · version 2 · machine block, Python: def run(ctx)
 # How many robots does the warehouse need? Hundreds of fleet-size × order-rate scenarios simulated at once, as one batch on the CPU, an NVIDIA GPU or Tenstorrent cards.
 # Workspace: Gianluca De Novi's workspace · Author: Gianluca De Novi
 # Saved: 2026-11-08
@@ -231,42 +231,199 @@ class Layout:
                 "blocked": sorted([list(b) for b in self.blocked])}
 
 
+class TTPlanner:
+    """Route planning on Tenstorrent cards with TT-NN, the cards' own library: the distance fields of every target
+    as tile matmuls and element-wise operations on the Tensix cores. A robot's next cell east is read through a
+    shift matrix (D @ P), north and south through the transposed grid; a move that is not allowed adds a large
+    number; then D = min(D, neighbour + 1) until nothing changes. bfloat16 holds whole numbers exactly up to 256,
+    more than the longest route in the hall. `ops` is TT-NN on the cards, or the same arithmetic in PyTorch to check
+    it."""
+    INF = 1000.0
+
+    def __init__(self, ops):
+        self.ops = ops
+
+    def distances(self, layout, tgt_cells):
+        """[T, C + 1] float32 on the CPU: steps from every cell to every target (1e6 = cannot get there)."""
+        import torch
+        o, INF = self.ops, self.INF
+        W, H, C, T = layout.W, layout.H, layout.C, len(tgt_cells)
+        Wp, Hp = -(-W // 32) * 32, -(-H // 32) * 32                 # whole 32 x 32 tiles
+        D0 = torch.full((T, Hp, Wp), INF)
+        for i, c in enumerate(tgt_cells):
+            D0[i, c // W, c % W] = 0.0
+        nxt = layout.neighbours()
+        masks = []
+        for d in range(4):                                             # 0 where the move is allowed, INF where not
+            m = torch.full((Hp, Wp), INF)
+            for c, row in enumerate(nxt):
+                if row[d] < C:
+                    m[c // W, c % W] = 0.0
+            masks.append(o.up(m.expand(T, Hp, Wp).contiguous()))
+        px = [torch.zeros(Wp, Wp), torch.zeros(Wp, Wp)]                # east: out[x] = D[x + 1]; west: out[x] = D[x - 1]
+        py = [torch.zeros(Hp, Hp), torch.zeros(Hp, Hp)]                # north: out[y] = D[y + 1]; south: out[y] = D[y - 1]
+        for x in range(Wp - 1):
+            px[0][x + 1, x] = 1.0
+            px[1][x, x + 1] = 1.0
+        for y in range(Hp - 1):
+            py[0][y + 1, y] = 1.0
+            py[1][y, y + 1] = 1.0
+        PE, PW, PN, PS = o.up(px[0]), o.up(px[1]), o.up(py[0]), o.up(py[1])
+        D = o.up(D0)
+        prev, it = None, 0
+        while it < 4 * C:
+            for _ in range(8):
+                Dt = o.transpose(D)
+                cand = o.minimum(o.minimum(o.add(o.matmul(D, PE), masks[0]), o.add(o.matmul(D, PW), masks[2])),
+                                 o.minimum(o.add(o.transpose(o.matmul(Dt, PN)), masks[1]), o.add(o.transpose(o.matmul(Dt, PS)), masks[3])))
+                D = o.minimum(D, o.add_scalar(cand, 1.0))
+                it += 1
+            host = o.down(D)
+            if prev is not None and torch.equal(host, prev):
+                break
+            prev = host
+        out = host[:, :H, :W].reshape(T, C).float()
+        out = torch.where(out >= INF / 2, torch.full_like(out, 1e6), out)
+        self.iterations = it
+        return torch.cat([out, torch.full((T, 1), 1e6)], 1)
+
+
+class TTNNOps:
+    """TT-NN on a Tenstorrent card: tensors in bfloat16 tiles in the card's memory."""
+
+    def __init__(self, ttnn, device):
+        self.tt, self.dev = ttnn, device
+
+    def up(self, t):
+        import torch
+        return self.tt.from_torch(t.to(torch.bfloat16), dtype=self.tt.bfloat16, layout=self.tt.TILE_LAYOUT, device=self.dev)
+
+    def down(self, x):
+        return self.tt.to_torch(x).float()
+
+    def matmul(self, a, b):
+        return self.tt.matmul(a, b)
+
+    def add(self, a, b):
+        return self.tt.add(a, b)
+
+    def add_scalar(self, a, s):
+        return self.tt.add(a, s)
+
+    def minimum(self, a, b):
+        return self.tt.minimum(a, b)
+
+    def transpose(self, a):
+        return self.tt.transpose(a, -2, -1)
+
+
+class TorchBF16Ops:
+    """The same operations in PyTorch, rounded to bfloat16 like the card: to check the Tenstorrent planner."""
+
+    def up(self, t):
+        import torch
+        return t.to(torch.bfloat16)
+
+    def down(self, x):
+        return x.float()
+
+    def matmul(self, a, b):
+        return (a.float() @ b.float()).to(a.dtype)
+
+    def add(self, a, b):
+        return a + b
+
+    def add_scalar(self, a, s):
+        return a + s
+
+    def minimum(self, a, b):
+        import torch
+        return torch.minimum(a, b)
+
+    def transpose(self, a):
+        return a.transpose(-2, -1).contiguous()
+
+
+class Backend:
+    """Where the simulation runs. device: the PyTorch device of the robots' step (CPU, CUDA or PyTorch/XLA on
+    Tenstorrent); tt: the TT-NN route planner when the machine has Tenstorrent cards."""
+
+    def __init__(self, device, label, kind, xm=None, tt=None, tt_device=None, ttnn=None):
+        self.device, self.label, self.kind, self.xm, self.tt = device, label, kind, xm, tt
+        self._tt_device, self._ttnn = tt_device, ttnn
+
+    def close(self):
+        if self._tt_device is not None:
+            try:
+                self._ttnn.close_device(self._tt_device)
+            except Exception:
+                pass
+            self._tt_device = None
+
+
+def tenstorrent_backend(log=print):
+    """Tenstorrent cards: routes planned with TT-NN on the cards; the robots' step on the cards too when PyTorch/XLA
+    for Tenstorrent (TT-Forge's tt-xla) is installed, else on the CPU beside them. Raises when there is no card."""
+    import torch
+    try:
+        import ttnn
+    except ImportError as e:
+        ttnn = None
+        why = "TT-NN is not installed (%s)" % e
+    tt = dev_tt = None
+    arch = ""
+    if ttnn is not None:
+        n = int(ttnn.GetNumAvailableDevices())
+        if n < 1:
+            why = "TT-NN finds no Tenstorrent card"
+        else:
+            dev_tt = ttnn.open_device(device_id=0)
+            try:
+                arch = str(dev_tt.arch()).split(".")[-1].replace("_", " ").title()
+            except Exception:
+                arch = ""
+            tt = TTPlanner(TTNNOps(ttnn, dev_tt))
+    xm = None
+    try:
+        import torch_xla.core.xla_model as xm_mod
+        import torch_xla.runtime as xr
+        xr.set_device_type("TT")
+        dev = xm_mod.xla_device()
+        if str(xm_mod.xla_device_hw(dev)).upper() not in ("CPU", ""):
+            xm = xm_mod
+    except ImportError:
+        pass
+    except Exception as e:
+        log("PyTorch/XLA for Tenstorrent not used (%s)." % e)
+    if tt is None and xm is None:
+        raise RuntimeError(why)
+    name = "Tenstorrent" + (" " + arch if arch else "")
+    if xm is not None:
+        return Backend(dev, name + " (TT-NN routes, steps with PyTorch/XLA)", "tenstorrent", xm, tt, dev_tt, ttnn)
+    return Backend(torch.device("cpu"), name + " (TT-NN routes, steps on the CPU)", "tenstorrent", None, tt, dev_tt, ttnn)
+
+
 def pick_device(want, log=print):
-    """(device, label, kind, xla module or None) for the Accelerator setting. auto: Tenstorrent cards when this
-    machine has them (PyTorch/XLA through TT-Forge), else an NVIDIA GPU (CUDA), else the CPU. A device asked for by
-    name is used, or the block stops and says why: a run never silently moves to another accelerator."""
+    """The Backend for the Accelerator setting. auto: Tenstorrent cards when this machine has them, else an NVIDIA
+    GPU (CUDA), else the CPU. A device asked for by name is used, or the block stops and says why: a run never
+    silently moves to another accelerator. (Imports of the Tenstorrent libraries sit in try blocks, so machines
+    without the cards do not try to install them.)"""
     import torch
     w = str(want or "auto").strip().lower()
-
-    def tenstorrent():
-        import torch_xla.core.xla_model as xm
-        try:
-            import torch_xla.runtime as xr
-            xr.set_device_type("TT")
-        except Exception:
-            pass
-        dev = xm.xla_device()
-        hw = ""
-        try:
-            hw = str(xm.xla_device_hw(dev))
-        except Exception:
-            pass
-        if hw.upper() in ("CPU", ""):
-            raise RuntimeError("PyTorch/XLA found no Tenstorrent card (device %s)" % (hw or "unknown"))
-        return dev, "Tenstorrent (PyTorch/XLA, %s)" % hw, "tenstorrent", xm
 
     def nvidia():
         if not torch.cuda.is_available():
             why = ("this PyTorch was built without CUDA (%s)" % torch.__version__) if not torch.version.cuda else "no NVIDIA GPU or driver usable from the worker"
             raise RuntimeError(why)
-        return torch.device("cuda"), "NVIDIA " + torch.cuda.get_device_name(0), "nvidia", None
+        name = torch.cuda.get_device_name(0)
+        return Backend(torch.device("cuda"), name if name.upper().startswith("NVIDIA") else "NVIDIA " + name, "nvidia")
 
     if w.startswith("tenstorrent") or w == "tt":
         try:
-            return tenstorrent()
+            return tenstorrent_backend(log)
         except Exception as e:
-            raise RuntimeError("Tenstorrent asked, but %s. On the Linux machine with the cards, install TT-Forge's PyTorch "
-                               "support (tt-xla) for the worker's Python, check that tt-smi sees the cards, then run again." % e)
+            raise RuntimeError("Tenstorrent asked, but %s. On the Linux machine with the cards, install TT-NN for the worker's "
+                               "Python (pip install ttnn, matching the cards' firmware), check that tt-smi sees the cards, then run again." % e)
     if w.startswith("nvidia") or w in ("cuda", "gpu"):
         try:
             return nvidia()
@@ -274,24 +431,24 @@ def pick_device(want, log=print):
             raise RuntimeError("NVIDIA GPU asked, but %s. Check that nvidia-smi works on the machine, or set Accelerator to auto or CPU." % e)
     if w == "auto":
         try:
-            import importlib.util
-            if importlib.util.find_spec("torch_xla") is not None:
-                return tenstorrent()
+            return tenstorrent_backend(log)
         except Exception as e:
-            log("No Tenstorrent card used (%s)." % e)
+            if "not installed" not in str(e):
+                log("No Tenstorrent card used: %s." % e)
         try:
             return nvidia()
         except Exception:
             pass
-    return torch.device("cpu"), "CPU (%d threads)" % torch.get_num_threads(), "cpu", None
+    return Backend(torch.device("cpu"), "CPU (%d threads)" % torch.get_num_threads(), "cpu")
 
 
 class Fleet:
     """B warehouses side by side, each with up to N robots (fleet[b] of them working), as tensors on `device`."""
 
-    def __init__(self, layout, B, N, device, xm=None, seed=1, pick_s=6.0, station_s=8.0, queue=1024):
+    def __init__(self, layout, B, N, backend, seed=1, pick_s=6.0, station_s=8.0, queue=1024):
         import torch
-        self.L, self.B, self.N, self.dev, self.xm = layout, B, N, device, xm
+        self.L, self.B, self.N, self.dev, self.xm, self.tt = layout, B, N, backend.device, backend.xm, backend.tt
+        device = self.dev
         self.T = len(layout.targets)
         self.C = layout.C
         self.pick_ticks = max(1, round(pick_s / TICK_S))
@@ -353,6 +510,14 @@ class Fleet:
         nxt = torch.tensor(L.neighbours(), dtype=torch.long, device=dev)                  # [C, 4]
         self.nxt = torch.cat([nxt, torch.full((1, 4), C, dtype=torch.long, device=dev)])  # row C: nowhere
         INF = 1e6
+        if self.tt is not None:                                                           # on the Tenstorrent cards
+            D = self.tt.distances(L, self.tgt_cell[:T].cpu().tolist()).to(dev)
+            self.D = D
+            self.reach = (D[:, :C] < INF / 2)
+            ms = (time.perf_counter() - t0) * 1000
+            self.timing["replan_ms"] = ms
+            self.timing["replan_iterations"] = self.tt.iterations
+            return ms
         D = torch.full((T, C + 1), INF, dtype=torch.float32, device=dev)
         D[torch.arange(T, device=dev), self.tgt_cell[:T]] = 0.0
         flat = self.nxt[:C].reshape(-1)                                                    # [C*4]
@@ -562,6 +727,15 @@ def run(ctx):
     import torch
     p = ctx.params
     layout = Layout(pairs=int(p.get("rack_pairs", 9)), blocks=int(p.get("rack_blocks", 3)), stations=int(p.get("stations", 6)))
+    hw = pick_device(p.get("accelerator", "auto"), ctx.log)
+    try:
+        return sweep(ctx, p, layout, hw)
+    finally:
+        hw.close()
+
+
+def sweep(ctx, p, layout, hw):
+    import torch
     fleets = sorted(set(int(v) for v in numbers(p.get("fleets"), [5, 10, 15, 20, 25, 30, 35, 40, 45, 50]) if v >= 1))
     fleets = [f for f in fleets if f <= layout.n_docks] or [min(layout.n_docks, 10)]
     rates = sorted(set(float(v) for v in numbers(p.get("rates"), [600, 900, 1200, 1500]) if v > 0))
@@ -569,14 +743,14 @@ def run(ctx):
     hours = max(0.1, min(24.0, float(p.get("hours", 2))))
     warm_min = max(0.0, float(p.get("warmup_min", 10)))
     cost_h = float(p.get("robot_cost_h", 2.5))
-    device, backend, kind, xm = pick_device(p.get("accelerator", "auto"), ctx.log)
+    device, backend, kind = hw.device, hw.label, hw.kind
     combos = [(f, r, s) for r in rates for f in fleets for s in range(seeds)]
     B, N = len(combos), max(fleets)
     ctx.log("%d scenarios (%d fleet sizes x %d order rates x %d seeds), %.1f simulated hours each, on %s." % (B, len(fleets), len(rates), seeds, hours, backend))
     ctx.telemetry("sweep", {"phase": "start", "scenarios": B, "fleets": fleets, "rates": rates, "seeds": seeds, "hours": hours,
                             "backend": backend, "kind": kind, "warmup_min": warm_min, "robot_cost_h": cost_h})
     torch.manual_seed(int(p.get("seed", 1)))
-    F = Fleet(layout, B, N, device, xm, seed=int(p.get("seed", 1)), pick_s=float(p.get("pick_s", 6)), station_s=float(p.get("station_s", 8)))
+    F = Fleet(layout, B, N, hw, seed=int(p.get("seed", 1)), pick_s=float(p.get("pick_s", 6)), station_s=float(p.get("station_s", 8)))
     F.set_fleet([c[0] for c in combos])
     F.set_rate([c[1] for c in combos])
     warm = int(warm_min * 60 / TICK_S)

@@ -2,13 +2,13 @@
 
 How many robots does the warehouse need? Hundreds of fleet-size × order-rate scenarios simulated at once, as one batch on the CPU, an NVIDIA GPU or Tenstorrent cards.
 
-Simulates every combination of Fleet sizes, Order rates and Seeds in the warehouse of the Warehouse fleet block, for the same simulated hours (after a warm-up), all at once: the robots of all scenarios are one batch of tensors, so a GPU or Tenstorrent cards run hundreds of scenarios in the time a CPU runs a few. Fleet sizes and order rates are lists (5,10,20) or ranges (5-50/5 = from 5 to 50 by 5). For each fleet size and order rate, averaged over the seeds: orders per hour delivered, share of the demand served, average and 95th-percentile order time, robots busy, time spent waiting, orders left waiting, and robot cost per order (Robot cost per hour). Live telemetry (channel sweep) carries the results as they form, for the Fleet sweep view; the results are also in fleet_sweep.csv (one row each), throughput_by_fleet.csv (one column per order rate, for a Chart) and sweep_summary.json (the cheapest fleet that keeps up with each order rate, and the speed of the machine).
+Simulates every combination of Fleet sizes, Order rates and Seeds in the warehouse of the Warehouse fleet block, for the same simulated hours (after a warm-up), all at once: the robots of all scenarios are one batch of tensors. Fleet sizes and order rates are lists (5,10,20) or ranges (5-50/5 = from 5 to 50 by 5). Accelerator: CPU and NVIDIA GPU run everything with PyTorch; Tenstorrent plans the routes on the cards with TT-NN (Tensix tile matmuls) and runs the scenarios' steps on the cards too when PyTorch/XLA for Tenstorrent (tt-xla) is installed, else on the CPU beside them; the machine with the cards needs TT-NN in the worker's Python (pip install ttnn). auto uses Tenstorrent cards when the machine has them, else an NVIDIA GPU, else the CPU. For each fleet size and order rate, averaged over the seeds: orders per hour delivered, share of the demand served, average and 95th-percentile order time, robots busy, time spent waiting, orders left waiting, and robot cost per order (Robot cost per hour). Live telemetry (channel sweep) carries the results as they form, for the Fleet sweep view; the results are also in fleet_sweep.csv, throughput_by_fleet.csv (for a Chart) and sweep_summary.json (the cheapest fleet that keeps up with each order rate, and the speed of the machine).
 
 An [EsaSim](https://esacode.com/) blueprint block: it runs on a machine, in Python (`backend.py`, `def run(ctx)`).
 
 | | |
 |---|---|
-| Block | `ws-fleet-size-sweep` · version 1 |
+| Block | `ws-fleet-size-sweep` · version 2 |
 | Workspace | Gianluca De Novi's workspace |
 | Author | Gianluca De Novi |
 | Runs on | Any machine, NVIDIA GPU, Tenstorrent |
