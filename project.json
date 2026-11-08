@@ -11,31 +11,31 @@
         {
             "name": "1 · Live warehouse",
             "file": "blueprints/1-live-warehouse.json",
-            "published_version": 6,
+            "published_version": 7,
             "nodes": 6
         },
         {
             "name": "2 · How many robots? (fleet-size sweep)",
             "file": "blueprints/2-how-many-robots-fleet-size-sweep.json",
-            "published_version": 1,
+            "published_version": 2,
             "nodes": 3
         },
         {
             "name": "3 · Same code, any accelerator (CPU vs GPU vs Tenstorrent)",
             "file": "blueprints/3-same-code-any-accelerator-cpu-vs-gpu-vs-tenstorrent.json",
-            "published_version": 1,
+            "published_version": 2,
             "nodes": 4
         },
         {
             "name": "4 · On Tenstorrent",
             "file": "blueprints/4-on-tenstorrent.json",
-            "published_version": 0,
+            "published_version": 1,
             "nodes": 5
         },
         {
             "name": "5 · Which layout? (same hall, same orders)",
             "file": "blueprints/5-which-layout-same-hall-same-orders.json",
-            "published_version": 1,
+            "published_version": 2,
             "nodes": 5
         }
     ],

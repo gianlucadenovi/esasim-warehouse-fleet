@@ -5,8 +5,8 @@
     },
     "name": "1 · Live warehouse",
     "description": "Fifty robots in a goods-to-person warehouse, live in 3D: change orders, robots and aisles while it runs.",
-    "published_version": 6,
-    "updated": "2026-11-08 05:26:45",
+    "published_version": 7,
+    "updated": "2026-11-08 05:30:41",
     "graph": {
         "nodes": [
             {
@@ -69,8 +69,8 @@
             {
                 "id": "tel",
                 "type": "telemetry",
-                "x": 800,
-                "y": 220,
+                "x": 880,
+                "y": 100,
                 "params": {
                     "interval": 0.5,
                     "channels": "kpi",
@@ -81,8 +81,8 @@
             {
                 "id": "chart",
                 "type": "chart",
-                "x": 1160,
-                "y": 220,
+                "x": 1220,
+                "y": 120,
                 "params": {
                     "kind": "line",
                     "x": "t",

@@ -5,7 +5,7 @@
     },
     "name": "2 · How many robots? (fleet-size sweep)",
     "description": "Hundreds of fleet-size × order-rate scenarios at once: throughput and cost per order against the fleet.",
-    "published_version": 1,
+    "published_version": 2,
     "updated": "2026-11-08 05:06:07",
     "graph": {
         "nodes": [
