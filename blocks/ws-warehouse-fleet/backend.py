@@ -1,6 +1,6 @@
 # ── EsaSim block ──────────────────────────────────────────────────────
-# Warehouse fleet (ws-warehouse-fleet) · version 2 · machine block, Python: def run(ctx)
-# A goods-to-person warehouse with up to 50 mobile robots, simulated live on the CPU, an NVIDIA GPU or Tenstorrent cards; the view changes orders, robots and aisles while it runs.
+# Warehouse fleet (ws-warehouse-fleet) · version 3 · machine block, Python: def run(ctx)
+# A goods-to-person warehouse with up to 50 mobile robots, simulated live on the CPU, an NVIDIA GPU or Tenstorrent cards; the 3D view shows it and changes orders, robots and aisles while it runs.
 # Workspace: Gianluca De Novi's workspace · Author: Gianluca De Novi
 # Saved: 2026-11-08
 #
@@ -809,6 +809,22 @@ class Live:
     def control(self, d):
         if not isinstance(d, dict):
             return False
+        if "control" in d:                  # from the 3D view's controls or a Controls view: {control: NAME, value}
+            name, v = str(d.get("control") or "").strip().lower().replace(" ", "_"), d.get("value")
+            if name in ("order_rate", "rate"):
+                d = {"rate": v}
+            elif name in ("robots", "speed", "stop"):
+                d = {name: v}
+            elif name in ("paused", "pause"):
+                d = {"pause": bool(v)}
+            elif name in ("block_aisle", "block") and isinstance(v, (list, tuple)) and len(v) >= 2:
+                cell = (int(v[0]), int(v[1]))
+                d = {"unblock": list(cell)} if cell in self.layout.blocked else {"block": list(cell)}
+            elif name in ("open_all_aisles", "open_all", "clear"):
+                d = {"clear": True}
+            else:
+                self.event("Unknown control %s" % d.get("control"), kind="refused")
+                return True
         F = self.fleet
         if "rate" in d:
             self.rate = max(0.0, min(6000.0, float(d["rate"])))

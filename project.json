@@ -41,7 +41,7 @@
         },
         {
             "id": "ws-warehouse-fleet",
-            "version": 2,
+            "version": 3,
             "name": "Warehouse fleet"
         },
         {
