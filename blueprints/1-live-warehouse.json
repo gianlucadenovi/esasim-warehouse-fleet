@@ -5,8 +5,8 @@
     },
     "name": "1 · Live warehouse",
     "description": "Fifty robots in a goods-to-person warehouse, live in 3D: change orders, robots and aisles while it runs.",
-    "published_version": 3,
-    "updated": "2026-11-08 02:11:41",
+    "published_version": 4,
+    "updated": "2026-11-08 02:44:29",
     "graph": {
         "nodes": [
             {
@@ -23,15 +23,21 @@
                 "x": 440,
                 "y": 80,
                 "params": {
-                    "robots": 24,
-                    "order_rate": 900,
+                    "robots": 40,
+                    "order_rate": 400,
                     "speed": "2",
                     "minutes": 20,
                     "accelerator": "auto",
-                    "stations": 6,
-                    "rack_pairs": 9,
-                    "pick_s": 6,
-                    "station_s": 8,
+                    "rack_pairs": 20,
+                    "rack_blocks": 5,
+                    "rack_len": 8,
+                    "stations": 8,
+                    "pick_s": 10,
+                    "station_s": 15,
+                    "robot_speed": 1.2,
+                    "battery_h": 8,
+                    "charge_min": 60,
+                    "charge_below": 25,
                     "seed": 1
                 },
                 "title": "Warehouse fleet (live)"
@@ -43,7 +49,9 @@
                 "y": -280,
                 "params": {
                     "environment": "studio",
-                    "quality": "high"
+                    "quality": "high",
+                    "controls": "slider order_rate 0 1500 400 25\nslider robots 1 60 40\nselect speed 1,2,4,8\nswitch paused\npick block_aisle\nbutton Open all aisles",
+                    "routes": true
                 },
                 "title": "Warehouse in 3D"
             },
@@ -67,9 +75,9 @@
                 "params": {
                     "kind": "line",
                     "x": "t",
-                    "y": "orders_h,backlog",
+                    "y": "orders_h,backlog,charging",
                     "channel": "kpi",
-                    "title": "Orders per hour (last 10 min) and orders waiting"
+                    "title": "Orders per hour (last 10 min), orders waiting, robots charging"
                 },
                 "title": "Orders per hour and orders waiting"
             }
