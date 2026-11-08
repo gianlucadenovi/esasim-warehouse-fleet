@@ -3,11 +3,11 @@
     "version": "1",
     "name": "Fleet-size sweep",
     "category": "Simulation",
-    "icon": "chart",
+    "icon": "grid",
     "side": "backend",
     "customizable": true,
-    "summary": "How many robots does the warehouse need? Hundreds of fleet-size × order-rate scenarios simulated at once, as one batch on the CPU, an NVIDIA GPU or Tenstorrent cards.",
-    "help": "Simulates every combination of Fleet sizes, Order rates and Seeds in the warehouse of the Warehouse fleet block, for the same simulated hours (after a warm-up), all at once: the robots of all scenarios are one batch of tensors. Fleet sizes and order rates are lists (5,10,20) or ranges (5-50/5 = from 5 to 50 by 5). Accelerator: CPU and NVIDIA GPU run everything with PyTorch; Tenstorrent plans the routes on the cards with TT-NN (Tensix tile matmuls) and runs the scenarios' steps on the cards too when PyTorch/XLA for Tenstorrent (tt-xla) is installed, else on the CPU beside them; the machine with the cards needs TT-NN in the worker's Python (pip install ttnn). auto uses Tenstorrent cards when the machine has them, else an NVIDIA GPU, else the CPU. For each fleet size and order rate, averaged over the seeds: orders per hour delivered, share of the demand served, average and 95th-percentile order time, robots busy, time spent waiting, orders left waiting, and robot cost per order (Robot cost per hour). Live telemetry (channel sweep) carries the results as they form, for the Fleet sweep view; the results are also in fleet_sweep.csv, throughput_by_fleet.csv (for a Chart) and sweep_summary.json (the cheapest fleet that keeps up with each order rate, and the speed of the machine).",
+    "summary": "How many robots does the warehouse need? Hundreds of fleet-size × order-rate scenarios with real robot speeds, pick times and batteries, simulated at once as one batch on the CPU, an NVIDIA GPU or Ten",
+    "help": "Simulates every combination of Fleet sizes, Order rates and Seeds in the warehouse of the Warehouse fleet block (same hall, robots, times and batteries), for the same simulated hours (after a warm-up), all at once: the robots of all scenarios are one batch of tensors. Fleet sizes and order rates are lists (10,20,30) or ranges (10-60/10 = from 10 to 60 by 10). Accelerator: CPU plans routes with SciPy and steps with PyTorch; NVIDIA GPU runs everything on the GPU; Tenstorrent plans the routes on the cards with TT-NN (Tensix tile matmuls) and runs the scenarios' steps on the cards too when PyTorch/XLA for Tenstorrent (tt-xla) is installed, else on the CPU beside them; the machine with the cards needs TT-NN in the worker's Python (pip install ttnn). auto uses Tenstorrent cards when the machine has them, else an NVIDIA GPU, else the CPU. For each fleet size and order rate, averaged over the seeds: orders and lines per hour delivered, share of the demand served, average and 95th-percentile order time, robots busy, time spent waiting, time spent charging, orders left waiting, and robot cost per order (Robot cost per hour). Live telemetry (channel sweep) carries the results as they form, for the Fleet sweep view; the results are also in fleet_sweep.csv, throughput_by_fleet.csv (for a Chart) and sweep_summary.json (the cheapest fleet that keeps up with each order rate, and the speed of the machine).",
     "inputs": [],
     "outputs": [
         {
@@ -43,14 +43,15 @@
             "key": "fleets",
             "label": "Fleet sizes",
             "type": "text",
-            "default": "5-50/5",
-            "help": "Robots: a list (10,20,30) or a range (5-50/5)"
+            "default": "10-60/10",
+            "help": "Robots: a list (10,20,30) or a range (10-60/10)"
         },
         {
             "key": "rates",
             "label": "Order rates (orders per hour)",
             "type": "text",
-            "default": "600,900,1200,1500"
+            "default": "300,500,700,900",
+            "help": "Each order has 1 to 3 lines (items)"
         },
         {
             "key": "seeds",
@@ -100,36 +101,84 @@
             "help": "auto: Tenstorrent cards, else an NVIDIA GPU, else the CPU of the machine that runs it"
         },
         {
-            "key": "stations",
-            "label": "Pick stations",
-            "type": "number",
-            "default": 6,
-            "min": 2,
-            "max": 8
-        },
-        {
             "key": "rack_pairs",
             "label": "Rack pairs",
             "type": "number",
-            "default": 9,
+            "default": 20,
             "min": 4,
-            "max": 14
+            "max": 30
+        },
+        {
+            "key": "rack_blocks",
+            "label": "Rack blocks",
+            "type": "number",
+            "default": 5,
+            "min": 1,
+            "max": 8
+        },
+        {
+            "key": "rack_len",
+            "label": "Rack length (m)",
+            "type": "number",
+            "default": 8,
+            "min": 4,
+            "max": 16
+        },
+        {
+            "key": "stations",
+            "label": "Pack-out stations",
+            "type": "number",
+            "default": 8,
+            "min": 1,
+            "max": 20
         },
         {
             "key": "pick_s",
             "label": "Seconds to pick an item",
             "type": "number",
-            "default": 6,
+            "default": 10,
             "min": 1,
-            "max": 60
+            "max": 120
         },
         {
             "key": "station_s",
-            "label": "Seconds at the station",
+            "label": "Seconds to unload at the station",
+            "type": "number",
+            "default": 15,
+            "min": 1,
+            "max": 120
+        },
+        {
+            "key": "robot_speed",
+            "label": "Robot speed (m/s)",
+            "type": "number",
+            "default": 1.2,
+            "min": 0.3,
+            "max": 2
+        },
+        {
+            "key": "battery_h",
+            "label": "Hours on a charge",
             "type": "number",
             "default": 8,
-            "min": 1,
-            "max": 60
+            "min": 0.5,
+            "max": 24
+        },
+        {
+            "key": "charge_min",
+            "label": "Minutes to charge from empty",
+            "type": "number",
+            "default": 60,
+            "min": 5,
+            "max": 600
+        },
+        {
+            "key": "charge_below",
+            "label": "Go to charge below (%)",
+            "type": "number",
+            "default": 25,
+            "min": 5,
+            "max": 80
         },
         {
             "key": "seed",
@@ -144,9 +193,10 @@
         "tenstorrent"
     ],
     "packages": [
-        "torch[cuda]"
+        "torch[cuda]",
+        "scipy"
     ],
     "esasim": {
-        "version": 2
+        "version": 3
     }
 }

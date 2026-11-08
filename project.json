@@ -46,7 +46,7 @@
         },
         {
             "id": "ws-fleet-size-sweep",
-            "version": 2,
+            "version": 3,
             "name": "Fleet-size sweep"
         },
         {

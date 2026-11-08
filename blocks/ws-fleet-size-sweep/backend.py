@@ -1,6 +1,6 @@
 # ── EsaSim block ──────────────────────────────────────────────────────
-# Fleet-size sweep (ws-fleet-size-sweep) · version 2 · machine block, Python: def run(ctx)
-# How many robots does the warehouse need? Hundreds of fleet-size × order-rate scenarios simulated at once, as one batch on the CPU, an NVIDIA GPU or Tenstorrent cards.
+# Fleet-size sweep (ws-fleet-size-sweep) · version 3 · machine block, Python: def run(ctx)
+# How many robots does the warehouse need? Hundreds of fleet-size × order-rate scenarios with real robot speeds, pick times and batteries, simulated at once as one batch on the CPU, an NVIDIA GPU or Ten
 # Workspace: Gianluca De Novi's workspace · Author: Gianluca De Novi
 # Saved: 2026-11-08
 #
@@ -12,20 +12,26 @@
 #   summary     Metrics (json)            Summary · Best fleet per order rate, scenarios, time and speed on this machine
 #   telemetry   Live telemetry            ctx.telemetry("channel", data) while it runs
 # Settings ctx.params["key"]
-#   fleets      text      Fleet sizes = "5-50/5"
-#   rates       text      Order rates (orders per hour) = "600,900,1200,1500"
+#   fleets      text      Fleet sizes = "10-60/10"
+#   rates       text      Order rates (orders per hour) = "300,500,700,900"
 #   seeds       number    Seeds per combination = 3
 #   hours       number    Simulated hours = 2
 #   warmup_min  number    Warm-up (simulated minutes, not counted) = 10
 #   robot_cost_h number    Robot cost per hour ($) = 2.5
 #   accelerator select    Accelerator = "auto" of auto | CPU | NVIDIA GPU | Tenstorrent
-#   stations    number    Pick stations = 6
-#   rack_pairs  number    Rack pairs = 9
-#   pick_s      number    Seconds to pick an item = 6
-#   station_s   number    Seconds at the station = 8
+#   rack_pairs  number    Rack pairs = 20
+#   rack_blocks number    Rack blocks = 5
+#   rack_len    number    Rack length (m) = 8
+#   stations    number    Pack-out stations = 8
+#   pick_s      number    Seconds to pick an item = 10
+#   station_s   number    Seconds to unload at the station = 15
+#   robot_speed number    Robot speed (m/s) = 1.2
+#   battery_h   number    Hours on a charge = 8
+#   charge_min  number    Minutes to charge from empty = 60
+#   charge_below number    Go to charge below (%) = 25
 #   seed        number    Random seed = 1
 # Runs on  Any machine, NVIDIA GPU, Tenstorrent. Return a dict to fill the "result" output.
-# Packages torch[cuda] (installed by the worker with pip when missing)
+# Packages torch[cuda], scipy (installed by the worker with pip when missing)
 # EsaSim rewrites these lines from the block's definition each time it is saved: change the definition, not them.
 # ── end of EsaSim block header ────────────────────────────────────────
 
@@ -37,30 +43,34 @@ import time
 
 # ---- Warehouse fleet engine (shared by Warehouse fleet and Fleet-size sweep) -------------------------------------
 #
-# A goods-to-person warehouse on a 1 m grid. Rack rows run north-south with one-way aisles between them (alternating
-# north and south), cross-aisles and two-lane highways at both ends; pick stations at the south wall, each with an
-# in-lane (the queue) and an out-lane; docks along the walls where idle robots wait.
-# An order is one pick: an idle robot drives to the pick face (popular locations near the front, ABC), waits while
-# the item goes into its tote, drives to the least busy station, waits for the operator, then takes the next order
-# or goes back to its dock.
+# A picking warehouse on a 1 m grid, worked by mobile robots and pickers (the collaborative way: the robot brings a
+# tote to the pick faces, a picker puts the items in, the robot takes them to a pack-out station). Rack rows run
+# north-south with one-way aisles between them, cross-aisles and two-lane highways at both ends; stations at the
+# south wall, each with an in-lane (the queue) and an out-lane; docks with chargers along the walls.
+# An order has 1 to 3 lines: the robot drives to each pick face (popular places near the front, ABC), waits while the
+# item goes into its tote, then drives to the least busy station, where the tote is emptied. Batteries run down as
+# robots drive and work; a robot low on charge finishes its order, goes to its dock and charges; idle robots charge
+# at their dock between orders. Times and speeds default to those of real warehouse robots (MiR100: 1.5 m/s at
+# most, about 10 h per charge, 2-3 h to charge; Locus Origin: about 8 h, 50 min to charge; 8-12 s per pick).
 #
 # The engine runs B scenarios side by side (B = 1 for the live demo, hundreds for a sweep), each with up to N robots,
-# as tensors: every step is the same dense operations on all robots of all scenarios, so it runs unchanged on a CPU,
-# an NVIDIA GPU (CUDA) or Tenstorrent cards (PyTorch/XLA); routes come from distance fields of every target,
-# computed by wavefront relaxation on the device (and again when an aisle is blocked).
+# as tensors: every step is the same dense operations on all robots of all scenarios, on a CPU, an NVIDIA GPU (CUDA)
+# or Tenstorrent cards. Routes come from the distance of every cell to every target, planned with what the machine
+# does best: breadth-first search in compiled code on a CPU (SciPy), wavefront relaxation on an NVIDIA GPU, tile
+# matmuls on the Tensix cores of Tenstorrent cards (TT-NN); and again whenever an aisle is blocked.
 
 E, N_, W_, S_ = 0, 1, 2, 3
 DX = (1, 0, -1, 0)
 DY = (0, 1, 0, -1)
-MODE_IDLE, MODE_TO_PICK, MODE_PICKING, MODE_TO_STATION, MODE_AT_STATION, MODE_OFF = 0, 1, 2, 3, 4, 5
-TICK_S = 0.6          # one step: a robot moves one cell (1.67 m/s) or turns
+MODE_IDLE, MODE_TO_PICK, MODE_PICKING, MODE_TO_STATION, MODE_AT_STATION, MODE_TO_CHARGE, MODE_CHARGING, MODE_OFF = range(8)
+CELL_M = 1.0          # one grid cell, in metres
 
 
 class Layout:
     """The warehouse: grid cells, allowed moves (one-way traffic), racks, pick faces, stations and docks."""
 
-    def __init__(self, pairs=9, blocks=3, rack_len=4, stations=6):
-        self.pairs, self.blocks, self.rack_len = pairs, blocks, rack_len
+    def __init__(self, pairs=20, blocks=5, rack_len=8, stations=8, bay=2):
+        self.pairs, self.blocks, self.rack_len, self.bay = pairs, blocks, rack_len, bay
         W = 3 * pairs + 5                                   # x: margin, dock column, aisles and rack pairs, dock column, margin
         y_store = 6                                         # rack rows start here
         y_top = y_store + blocks * (rack_len + 1) - 1        # first top highway row
@@ -111,11 +121,11 @@ class Layout:
                     racks.append({"x": x, "y": y0, "len": rack_len, "face": W_ if side == 0 else E, "id": len(racks)})
                     for y in range(y0, y0 + rack_len):
                         kind[y][x] = "rack"
-        # pick faces: aisle cells beside a rack
+        # pick faces: aisle cells beside a rack, one per bay (a shelf section of `bay` metres)
         picks = []
         for x in aisles:
             for y in range(y_store, y_top):
-                if kind[y][x] == "aisle":
+                if kind[y][x] == "aisle" and ((y - y_store) % (rack_len + 1)) % max(1, bay) == max(1, bay) // 2:
                     near = [r for r in racks if r["y"] <= y < r["y"] + rack_len and abs(r["x"] - x) == 1]
                     if near:
                         picks.append((x, y, [r["id"] for r in near]))
@@ -221,7 +231,7 @@ class Layout:
                     m |= 1 << d
                 dirs.append("0123456789abcdef"[m])
         code = {"wall": ".", "highway": "h", "cross": "c", "aisle": "a", "rack": "r", "queue": "q", "station": "s", "exit": "x", "dock": "d"}
-        return {"format": "esasim.warehouse/1", "cell_m": 1.0, "tick_s": TICK_S, "w": self.W, "h": self.H,
+        return {"format": "esasim.warehouse/1", "cell_m": CELL_M, "w": self.W, "h": self.H,
                 "kinds": "".join(code[self.kind[y][x]] for y in range(self.H) for x in range(self.W)),
                 "moves": "".join(dirs),
                 "racks": [[r["x"], r["y"], r["len"], r["face"]] for r in self.racks],
@@ -235,10 +245,10 @@ class TTPlanner:
     """Route planning on Tenstorrent cards with TT-NN, the cards' own library: the distance fields of every target
     as tile matmuls and element-wise operations on the Tensix cores. A robot's next cell east is read through a
     shift matrix (D @ P), north and south through the transposed grid; a move that is not allowed adds a large
-    number; then D = min(D, neighbour + 1) until nothing changes. bfloat16 holds whole numbers exactly up to 256,
-    more than the longest route in the hall. `ops` is TT-NN on the cards, or the same arithmetic in PyTorch to check
+    number; then D = min(D, neighbour + 1) until nothing changes. In float32: routes in a large hall are longer than
+    the 256 steps bfloat16 counts exactly. `ops` is TT-NN on the cards, or the same arithmetic in PyTorch to check
     it."""
-    INF = 1000.0
+    INF = 100000.0
 
     def __init__(self, ops):
         self.ops = ops
@@ -289,14 +299,14 @@ class TTPlanner:
 
 
 class TTNNOps:
-    """TT-NN on a Tenstorrent card: tensors in bfloat16 tiles in the card's memory."""
+    """TT-NN on a Tenstorrent card: tensors in float32 tiles in the card's memory."""
 
     def __init__(self, ttnn, device):
         self.tt, self.dev = ttnn, device
 
     def up(self, t):
         import torch
-        return self.tt.from_torch(t.to(torch.bfloat16), dtype=self.tt.bfloat16, layout=self.tt.TILE_LAYOUT, device=self.dev)
+        return self.tt.from_torch(t.to(torch.float32), dtype=self.tt.float32, layout=self.tt.TILE_LAYOUT, device=self.dev)
 
     def down(self, x):
         return self.tt.to_torch(x).float()
@@ -317,18 +327,18 @@ class TTNNOps:
         return self.tt.transpose(a, -2, -1)
 
 
-class TorchBF16Ops:
-    """The same operations in PyTorch, rounded to bfloat16 like the card: to check the Tenstorrent planner."""
+class TorchOps:
+    """The same operations in PyTorch on the CPU, to check the Tenstorrent planner."""
 
     def up(self, t):
         import torch
-        return t.to(torch.bfloat16)
+        return t.to(torch.float32)
 
     def down(self, x):
         return x.float()
 
     def matmul(self, a, b):
-        return (a.float() @ b.float()).to(a.dtype)
+        return a @ b
 
     def add(self, a, b):
         return a + b
@@ -342,6 +352,29 @@ class TorchBF16Ops:
 
     def transpose(self, a):
         return a.transpose(-2, -1).contiguous()
+
+
+def cpu_distances(layout, tgt_cells):
+    """[T, C + 1] float32: steps from every cell to every target, by breadth-first search in compiled code (SciPy's
+    csgraph) over the reversed one-way roads. None when SciPy is missing."""
+    try:
+        import numpy as np
+        from scipy.sparse import csr_matrix
+        from scipy.sparse.csgraph import shortest_path
+    except ImportError:
+        return None
+    import torch
+    C = layout.C
+    src, dst = [], []
+    for c, row in enumerate(layout.neighbours()):
+        for n in row:
+            if n < C:
+                src.append(n); dst.append(c)                        # reversed: from the next cell back to this one
+    g = csr_matrix((np.ones(len(src)), (src, dst)), shape=(C, C))
+    d = shortest_path(g, method="D", directed=True, unweighted=True, indices=list(tgt_cells))
+    d[~np.isfinite(d)] = 1e6
+    D = torch.from_numpy(d.astype(np.float32))
+    return torch.cat([D, torch.full((len(tgt_cells), 1), 1e6)], 1)
 
 
 class Backend:
@@ -443,25 +476,36 @@ def pick_device(want, log=print):
 
 
 class Fleet:
-    """B warehouses side by side, each with up to N robots (fleet[b] of them working), as tensors on `device`."""
+    """B warehouses side by side, each with up to N robots (fleet[b] of them working), as tensors on the backend's
+    device. Times in seconds, speed in metres per second, battery as a share of a full charge."""
 
-    def __init__(self, layout, B, N, backend, seed=1, pick_s=6.0, station_s=8.0, queue=1024):
+    def __init__(self, layout, B, N, backend, seed=1, pick_s=10.0, station_s=15.0, speed=1.2, lines=(0.5, 0.3, 0.2),
+                 battery_h=8.0, charge_min=60.0, low=0.25, full=0.95, queue=1024):
         import torch
         self.L, self.B, self.N, self.dev, self.xm, self.tt = layout, B, N, backend.device, backend.xm, backend.tt
-        device = self.dev
+        self.kind = backend.kind
+        dev = self.dev
         self.T = len(layout.targets)
         self.C = layout.C
-        self.pick_ticks = max(1, round(pick_s / TICK_S))
-        self.station_ticks = max(1, round(station_s / TICK_S))
+        self.speed = max(0.2, float(speed))
+        self.tick = CELL_M / self.speed                                    # one step: a robot moves one cell, or turns
+        self.pick_ticks = max(1, round(pick_s / self.tick))
+        self.station_ticks = max(1, round(station_s / self.tick))
+        self.drain_move = self.tick / (max(0.5, battery_h) * 3600.0)       # share of a charge used per step on the move
+        self.drain_still = self.drain_move * 0.35                          # waiting, picking, at the station
+        self.charge_step = self.tick / (max(5.0, charge_min) * 60.0)       # share of a charge gained per step on the dock
+        self.low, self.full = float(low), float(full)
         self.Q = queue
         torch.manual_seed(seed)
-        dev = device
         self.lower = torch.tril(torch.ones(N, N, dtype=torch.bool), diagonal=-1).to(dev)     # [i, j]: j has priority over i
         tgt_cells = [layout.idx(x, y) for x, y in layout.targets]
         self.tgt_cell = torch.tensor(tgt_cells + [self.C], dtype=torch.long, device=dev)
         pop = torch.tensor(layout.popularity(), dtype=torch.float32)
         self.pop_cdf = torch.cumsum(pop, 0).to(dev)
         self.pop_cdf[-1] = 1.0001
+        lp = torch.tensor(list(lines), dtype=torch.float32)
+        self.lines_cdf = (torch.cumsum(lp / lp.sum(), 0)).to(dev)
+        self.lines_cdf[-1] = 1.0001
         self.flowing = torch.tensor([layout.kind[c // layout.W][c % layout.W] == "highway" for c in range(self.C)] + [False], device=dev)
         # cells only a robot going there may enter: a dock (its owner) and a station's queue (robots for that station)
         owner = [-1] * (self.C + 1)
@@ -478,10 +522,14 @@ class Fleet:
         self.replan()
         # state
         z = lambda dt=torch.long: torch.zeros(B, N, dtype=dt, device=dev)
-        self.pos = torch.full((B, N), self.C, dtype=torch.long, device=dev); self.head = z(); self.mode = z(); self.tgt = z(); self.timer = z(); self.wait = z()
+        self.pos = torch.full((B, N), self.C, dtype=torch.long, device=dev)
+        self.head, self.mode, self.tgt, self.timer, self.wait = z(), z(), z(), z(), z()
+        self.lines_left, self.items = z(), z()
+        self.battery = torch.full((B, N), 0.9, dtype=torch.float32, device=dev)
         self.order_t = z(torch.float32)
         self.home = z()
         self.active = z(torch.bool)
+        self.leaving = z(torch.bool)
         self.q_t = torch.zeros(B, queue, dtype=torch.float32, device=dev)
         self.q_head = torch.zeros(B, dtype=torch.long, device=dev)
         self.q_tail = torch.zeros(B, dtype=torch.long, device=dev)
@@ -489,20 +537,17 @@ class Fleet:
         self.t = 0.0
         self.steps = 0
         # statistics
-        self.done = torch.zeros(B, dtype=torch.float32, device=dev)
-        self.done_time = torch.zeros(B, dtype=torch.float32, device=dev)
+        f = lambda: torch.zeros(B, dtype=torch.float32, device=dev)
+        self.done, self.lines_done, self.done_time = f(), f(), f()
         self.done_hist = torch.zeros(B, 64, dtype=torch.float32, device=dev)  # order times, 15 s bins
-        self.busy_ticks = torch.zeros(B, dtype=torch.float32, device=dev)
-        self.robot_ticks = torch.zeros(B, dtype=torch.float32, device=dev)
-        self.wait_ticks = torch.zeros(B, dtype=torch.float32, device=dev)
-        self.dropped = torch.zeros(B, dtype=torch.float32, device=dev)
+        self.busy_ticks, self.robot_ticks, self.wait_ticks, self.charge_ticks, self.dropped = f(), f(), f(), f(), f()
         self.heat = torch.zeros(B, self.C + 1, dtype=torch.float32, device=dev) if B == 1 else None
         self.set_fleet([0] * B)
 
     # -- routes --------------------------------------------------------------------------------------------------
     def replan(self):
-        """Distance (in steps) from every cell to every target along the allowed moves, by wavefront relaxation on
-        the device: D[t, c] = min over moves c -> n of 1 + D[t, n]. Run again when the roads change."""
+        """Steps from every cell to every target along the allowed moves, planned on this machine's accelerator.
+        Run again when the roads change."""
         import time
         import torch
         t0 = time.perf_counter()
@@ -510,49 +555,47 @@ class Fleet:
         nxt = torch.tensor(L.neighbours(), dtype=torch.long, device=dev)                  # [C, 4]
         self.nxt = torch.cat([nxt, torch.full((1, 4), C, dtype=torch.long, device=dev)])  # row C: nowhere
         INF = 1e6
-        if self.tt is not None:                                                           # on the Tenstorrent cards
-            D = self.tt.distances(L, self.tgt_cell[:T].cpu().tolist()).to(dev)
-            self.D = D
-            self.reach = (D[:, :C] < INF / 2)
-            ms = (time.perf_counter() - t0) * 1000
-            self.timing["replan_ms"] = ms
-            self.timing["replan_iterations"] = self.tt.iterations
-            return ms
-        D = torch.full((T, C + 1), INF, dtype=torch.float32, device=dev)
-        D[torch.arange(T, device=dev), self.tgt_cell[:T]] = 0.0
-        flat = self.nxt[:C].reshape(-1)                                                    # [C*4]
-        it, changed = 0, True
-        while changed and it < 4 * C:
-            for _ in range(16):
-                cand = D[:, flat].reshape(T, C, 4).amin(2) + 1.0
-                newD = torch.cat([torch.minimum(D[:, :C], cand), D[:, C:]], 1)
-                if self.xm is not None:
-                    self.xm.mark_step()
-                it += 1
-                last, D = D, newD
-            changed = bool((last != D).any().item())
-        self.D = D
-        self.reach = (D[:, :C] < INF / 2)
+        D, how, it = None, "", 0
+        if self.tt is not None:                                                           # Tensix cores, TT-NN
+            D, how, it = self.tt.distances(L, self.tgt_cell[:T].cpu().tolist()), "TT-NN tile matmuls", self.tt.iterations
+        elif dev.type == "cpu":                                                           # CPU: compiled BFS
+            D = cpu_distances(L, self.tgt_cell[:T].cpu().tolist())
+            how = "breadth-first search (SciPy)" if D is not None else ""
+        if D is None:                                                                     # GPU: wavefront relaxation
+            D = torch.full((T, C + 1), INF, dtype=torch.float32, device=dev)
+            D[torch.arange(T, device=dev), self.tgt_cell[:T]] = 0.0
+            flat = self.nxt[:C].reshape(-1)                                                # [C*4]
+            changed = True
+            while changed and it < 4 * C:
+                for _ in range(16):
+                    cand = D[:, flat].reshape(T, C, 4).amin(2) + 1.0
+                    newD = torch.cat([torch.minimum(D[:, :C], cand), D[:, C:]], 1)
+                    if self.xm is not None:
+                        self.xm.mark_step()
+                    it += 1
+                    last, D = D, newD
+                changed = bool((last != D).any().item())
+            how = "wavefront relaxation"
+        self.D = D.to(dev)
+        self.reach = (self.D[:, :C] < INF / 2)
         if dev.type == "cuda":
             torch.cuda.synchronize()
         ms = (time.perf_counter() - t0) * 1000
-        self.timing["replan_ms"] = ms
-        self.timing["replan_iterations"] = it
+        self.timing.update({"replan_ms": ms, "replan_iterations": it, "replan_how": how})
         return ms
 
     # -- fleet size and orders -----------------------------------------------------------------------------------
     def set_fleet(self, sizes):
         """Robots 0..sizes[b]-1 work in scenario b. New robots start at their docks; robots taken away finish their
-        order first, then leave."""
+        order first, then park at their dock and leave."""
+        import math
         import torch
         dev = self.dev
         n_d = self.L.n_docks
         size = torch.tensor(sizes, dtype=torch.long, device=dev).clamp(0, min(self.N, n_d))
         ids = torch.arange(self.N, device=dev)[None, :].expand(self.B, -1)
         want = ids < size[:, None]
-        # docks spread round the walls: robot i -> dock (i * step) mod n_docks
-        import math
-        step = next(s for s in (7, 5, 11, 13, 3, 1) if math.gcd(s, n_d) == 1)
+        step = next(s for s in (7, 5, 11, 13, 3, 1) if math.gcd(s, n_d) == 1)          # docks spread round the walls
         home_t = self.dock_ids[(ids * step) % n_d]
         new = want & ~self.active
         self.home = torch.where(new, home_t, self.home)
@@ -561,8 +604,11 @@ class Fleet:
         self.head = torch.where(new, (dock_out[(ids * step) % n_d] + 2) % 4, self.head)
         self.mode = torch.where(new, torch.full_like(self.mode, MODE_IDLE), self.mode)
         self.tgt = torch.where(new, home_t, self.tgt)
-        self.timer = torch.where(new, torch.zeros_like(self.timer), self.timer)
-        self.wait = torch.where(new, torch.zeros_like(self.wait), self.wait)
+        for name in ("timer", "wait", "lines_left", "items"):
+            setattr(self, name, torch.where(new, torch.zeros_like(getattr(self, name)), getattr(self, name)))
+        # robots arrive with the charge they have (as at the start of a shift): some go to charge first
+        fresh = 0.2 + 0.75 * torch.rand(self.B, self.N, device=dev)
+        self.battery = torch.where(new, fresh, self.battery)
         self.leaving = self.active & ~want
         self.active = self.active | want
         self.size = size
@@ -576,14 +622,24 @@ class Fleet:
         self.L.blocked = set(tuple(c) for c in cells)
         return self.replan()
 
+    def _sample(self, u, cdf, top):
+        return (u[:, :, None] >= cdf[None, None, :]).long().sum(2).clamp(max=top)
+
+    def _new_pick(self, B, N, C):
+        """A pick face for every robot, by popularity, among the faces reachable from where it is."""
+        import torch
+        pick = self._sample(torch.rand(B, N, device=self.dev), self.pop_cdf, self.L.n_picks - 1)
+        ok = self.reach[pick, self.pos.clamp(max=C - 1)] & self.reach[self.station_ids[0], self.tgt_cell[pick]]
+        return pick, ok
+
     # -- one step ------------------------------------------------------------------------------------------------
     def step(self):
         import torch
         B, N, C, dev = self.B, self.N, self.C, self.dev
-        t = self.t
-        act = self.active
+        t, tick = self.t, self.tick
+        full = lambda m: torch.full_like(self.mode, m)
         # orders arrive (Poisson, as 4 Bernoulli draws per step)
-        p = (self.rate * TICK_S / 3600.0 / 4.0).clamp(max=1.0)
+        p = (self.rate * tick / 3600.0 / 4.0).clamp(max=1.0)
         arrivals = (torch.rand(B, 4, device=dev) < p[:, None]).long()
         qpos = torch.arange(self.Q, device=dev)[None, :]
         for k in range(4):
@@ -595,55 +651,79 @@ class Fleet:
         self.dropped = self.dropped + overflow.float()
         self.q_head = self.q_head + overflow
         pending = self.q_tail - self.q_head
-        # robots that finished their order and are no longer wanted leave
-        gone = self.leaving & (self.mode == MODE_IDLE) & (self.pos == self.tgt_cell[self.home])
+        # robots no longer wanted leave once parked at their dock
+        at_home = self.pos == self.tgt_cell[self.home]
+        gone = self.leaving & at_home & ((self.mode == MODE_IDLE) | (self.mode == MODE_CHARGING))
         self.active = self.active & ~gone
         self.leaving = self.leaving & ~gone
         act = self.active
         self.pos = torch.where(gone, torch.full_like(self.pos, C), self.pos)
-        # idle robots take the oldest orders (lowest robot number first)
-        idle = act & ~self.leaving & (self.mode == MODE_IDLE)
+        # idle robots with enough charge take the oldest orders (lowest robot number first)
+        idle = act & ~self.leaving & (self.mode == MODE_IDLE) & (self.battery >= self.low)
         rank = torch.cumsum(idle.long(), 1) - 1
         take = idle & (rank < pending[:, None])
-        u = torch.rand(B, N, device=dev)
-        pick = (u[:, :, None] >= self.pop_cdf[None, None, :]).long().sum(2).clamp(max=self.L.n_picks - 1)
-        reach = self.reach[pick, self.pos.clamp(max=C - 1)] & self.reach[self.station_ids[0], self.tgt_cell[pick]]
-        take = take & reach
+        pick, ok = self._new_pick(B, N, C)
+        take = take & ok
         q_idx = (self.q_head[:, None] + rank) % self.Q
         self.order_t = torch.where(take, torch.gather(self.q_t, 1, q_idx), self.order_t)
         self.tgt = torch.where(take, pick, self.tgt)
-        self.mode = torch.where(take, torch.full_like(self.mode, MODE_TO_PICK), self.mode)
+        self.mode = torch.where(take, full(MODE_TO_PICK), self.mode)
+        nlines = self._sample(torch.rand(B, N, device=dev), self.lines_cdf, self.lines_cdf.numel() - 1) + 1
+        self.lines_left = torch.where(take, nlines, self.lines_left)
+        self.items = torch.where(take, torch.zeros_like(self.items), self.items)
         self.q_head = self.q_head + take.long().sum(1)
         # arrivals at targets
         at = act & (self.pos == self.tgt_cell[self.tgt])
         start_pick = at & (self.mode == MODE_TO_PICK)
-        self.mode = torch.where(start_pick, torch.full_like(self.mode, MODE_PICKING), self.mode)
+        self.mode = torch.where(start_pick, full(MODE_PICKING), self.mode)
         self.timer = torch.where(start_pick, torch.full_like(self.timer, self.pick_ticks), self.timer)
         start_st = at & (self.mode == MODE_TO_STATION)
-        self.mode = torch.where(start_st, torch.full_like(self.mode, MODE_AT_STATION), self.mode)
+        self.mode = torch.where(start_st, full(MODE_AT_STATION), self.mode)
         self.timer = torch.where(start_st, torch.full_like(self.timer, self.station_ticks), self.timer)
+        start_ch = at & (self.mode == MODE_TO_CHARGE)
+        self.mode = torch.where(start_ch, full(MODE_CHARGING), self.mode)
         dwell = act & ((self.mode == MODE_PICKING) | (self.mode == MODE_AT_STATION))
         self.timer = torch.where(dwell, self.timer - 1, self.timer)
-        # picked: off to the least busy station (robots already heading there, then distance)
+        # an item picked: the next line of the order, or off to the least busy station
         picked = dwell & (self.mode == MODE_PICKING) & (self.timer <= 0)
+        self.items = torch.where(picked, self.items + 1, self.items)
+        self.lines_left = torch.where(picked, self.lines_left - 1, self.lines_left)
+        self.lines_done = self.lines_done + picked.float().sum(1)
+        more = picked & (self.lines_left > 0)
+        pick2, ok2 = self._new_pick(B, N, C)
+        more = more & ok2
+        self.tgt = torch.where(more, pick2, self.tgt)
+        self.mode = torch.where(more, full(MODE_TO_PICK), self.mode)
+        to_st = picked & ~more
         heading = ((self.mode == MODE_TO_STATION) | (self.mode == MODE_AT_STATION)) & act
         load = (heading[:, :, None] & (self.tgt[:, :, None] == self.station_ids[None, None, :])).float().sum(1)   # [B, S]
         dist = self.D[self.station_ids][:, self.pos.clamp(max=C)].permute(1, 2, 0)                             # [B, N, S]
-        score = dist + 6.0 * load[:, None, :]
-        st = self.station_ids[score.argmin(2)]
-        self.tgt = torch.where(picked, st, self.tgt)
-        self.mode = torch.where(picked, torch.full_like(self.mode, MODE_TO_STATION), self.mode)
-        # delivered: the order is done
+        st = self.station_ids[(dist + 6.0 * load[:, None, :]).argmin(2)]
+        self.tgt = torch.where(to_st, st, self.tgt)
+        self.mode = torch.where(to_st, full(MODE_TO_STATION), self.mode)
+        # tote emptied at the station: the order is done
         served = dwell & (self.mode == MODE_AT_STATION) & (self.timer <= 0)
         took = torch.where(served, t - self.order_t, torch.zeros_like(self.order_t))
         self.done = self.done + served.float().sum(1)
         self.done_time = self.done_time + took.sum(1)
         bins = (took / 15.0).long().clamp(0, 63)
         self.done_hist = self.done_hist + (served[:, :, None] & (bins[:, :, None] == torch.arange(64, device=dev)[None, None, :])).float().sum(1)
-        self.mode = torch.where(served, torch.full_like(self.mode, MODE_IDLE), self.mode)
-        self.tgt = torch.where(served | (self.mode == MODE_IDLE), self.home, self.tgt)
+        self.items = torch.where(served, torch.zeros_like(self.items), self.items)
+        # after an order: low on charge -> to the dock to charge, else idle (waiting for an order, back at the dock)
+        low = served & (self.battery < self.low)
+        self.mode = torch.where(low, full(MODE_TO_CHARGE), torch.where(served, full(MODE_IDLE), self.mode))
+        idle_low = act & (self.mode == MODE_IDLE) & (self.battery < self.low)
+        self.mode = torch.where(idle_low, full(MODE_TO_CHARGE), self.mode)
+        homeward = (self.mode == MODE_IDLE) | (self.mode == MODE_TO_CHARGE) | (self.mode == MODE_CHARGING)
+        self.tgt = torch.where(homeward, self.home, self.tgt)
+        # charging on the dock: full -> waiting for orders again; idle robots on their dock charge too
+        on_dock = act & (self.pos == self.tgt_cell[self.home])
+        charging = on_dock & ((self.mode == MODE_CHARGING) | (self.mode == MODE_IDLE))
+        self.battery = torch.where(charging, (self.battery + self.charge_step).clamp(max=1.0), self.battery)
+        done_charging = act & (self.mode == MODE_CHARGING) & (self.battery >= self.full)
+        self.mode = torch.where(done_charging, full(MODE_IDLE), self.mode)
         # movement: the best next cell towards the target, turning first when needed
-        moving = act & ((self.mode == MODE_TO_PICK) | (self.mode == MODE_TO_STATION) | (self.mode == MODE_IDLE)) & (self.pos != self.tgt_cell[self.tgt])
+        moving = act & ((self.mode == MODE_TO_PICK) | (self.mode == MODE_TO_STATION) | (self.mode == MODE_IDLE) | (self.mode == MODE_TO_CHARGE)) & (self.pos != self.tgt_cell[self.tgt])
         nb = self.nxt[self.pos.clamp(max=C)]                                       # [B, N, 4]
         cost = self.D.reshape(-1)[(self.tgt[:, :, None] * (C + 1) + nb)]           # [B, N, 4]
         dirs = torch.arange(4, device=dev)[None, None, :]
@@ -670,37 +750,58 @@ class Fleet:
         blocked_now = go & ~move
         self.pos = torch.where(move, dest, self.pos)
         self.wait = torch.where(move | ~moving, torch.zeros_like(self.wait), self.wait + 1)   # turning or blocked: still waiting
+        # the battery runs down: more on the move than standing
+        use = torch.where(move | turn, torch.full_like(self.battery, self.drain_move), torch.full_like(self.battery, self.drain_still))
+        self.battery = torch.where(act & ~charging, (self.battery - use).clamp(min=0.0), self.battery)
         # statistics
-        working = act & (self.mode != MODE_IDLE)
+        working = act & (self.mode >= MODE_TO_PICK) & (self.mode <= MODE_AT_STATION)
         self.busy_ticks = self.busy_ticks + working.float().sum(1)
         self.robot_ticks = self.robot_ticks + act.float().sum(1)
         self.wait_ticks = self.wait_ticks + blocked_now.float().sum(1)
+        self.charge_ticks = self.charge_ticks + (act & ((self.mode == MODE_CHARGING) | (self.mode == MODE_TO_CHARGE))).float().sum(1)
         if self.heat is not None:
             self.heat = self.heat * 0.995
             self.heat = self.heat.index_add(1, self.pos[0], blocked_now.float())
         if self.xm is not None:
             self.xm.mark_step()
-        self.t = t + TICK_S
+        self.t = t + tick
         self.steps += 1
+
+    def retarget(self):
+        """Robots going to a pick face that can no longer be reached take another place for that line."""
+        import torch
+        C = self.C
+        bad = self.active & (self.mode == MODE_TO_PICK) & ~self.reach[self.tgt, self.pos.clamp(max=C - 1)]
+        n = int(bad.sum())
+        for _ in range(8):
+            if not bool(bad.any()):
+                break
+            pick, ok = self._new_pick(self.B, self.N, C)
+            self.tgt = torch.where(bad & ok, pick, self.tgt)
+            bad = bad & ~ok
+        return n
 
     # -- reading out ---------------------------------------------------------------------------------------------
     def snapshot(self, b=0):
-        """Robots of scenario b: [cell, heading, mode, target cell] each (cell C = not on the floor)."""
+        """Robots of scenario b: [cell, heading, mode, target cell, battery %, items in the tote] each
+        (cell C = not on the floor)."""
         import torch
         m = torch.where(self.active[b], self.mode[b], torch.full_like(self.mode[b], MODE_OFF))
         pos = torch.where(self.active[b], self.pos[b], torch.full_like(self.pos[b], self.C))
         tc = self.tgt_cell[self.tgt[b]]
-        return torch.stack([pos, self.head[b], m, tc], 1).cpu().tolist()
+        bat = (self.battery[b] * 100).round().long()
+        return torch.stack([pos, self.head[b], m, tc, bat, self.items[b]], 1).cpu().tolist()
 
     def stats(self):
         import torch
         busy = (self.busy_ticks / self.robot_ticks.clamp(min=1)).cpu()
         hours = max(self.t, 1e-6) / 3600.0
         done = self.done.cpu()
-        return {"done": done.tolist(), "per_hour": (done / hours).tolist(),
+        return {"done": done.tolist(), "per_hour": (done / hours).tolist(), "lines": self.lines_done.cpu().tolist(),
                 "avg_order_s": (self.done_time.cpu() / done.clamp(min=1)).tolist(),
                 "utilization": busy.tolist(), "backlog": (self.q_tail - self.q_head).cpu().tolist(),
                 "wait_share": (self.wait_ticks / self.robot_ticks.clamp(min=1)).cpu().tolist(),
+                "charge_share": (self.charge_ticks / self.robot_ticks.clamp(min=1)).cpu().tolist(),
                 "hist": self.done_hist.cpu().tolist()}
 
 
@@ -726,7 +827,8 @@ def numbers(text, default):
 def run(ctx):
     import torch
     p = ctx.params
-    layout = Layout(pairs=int(p.get("rack_pairs", 9)), blocks=int(p.get("rack_blocks", 3)), stations=int(p.get("stations", 6)))
+    layout = Layout(pairs=int(p.get("rack_pairs", 20)), blocks=int(p.get("rack_blocks", 5)), rack_len=int(p.get("rack_len", 8)),
+                    stations=int(p.get("stations", 8)))
     hw = pick_device(p.get("accelerator", "auto"), ctx.log)
     try:
         return sweep(ctx, p, layout, hw)
@@ -736,9 +838,9 @@ def run(ctx):
 
 def sweep(ctx, p, layout, hw):
     import torch
-    fleets = sorted(set(int(v) for v in numbers(p.get("fleets"), [5, 10, 15, 20, 25, 30, 35, 40, 45, 50]) if v >= 1))
+    fleets = sorted(set(int(v) for v in numbers(p.get("fleets"), [10, 20, 30, 40, 50, 60]) if v >= 1))
     fleets = [f for f in fleets if f <= layout.n_docks] or [min(layout.n_docks, 10)]
-    rates = sorted(set(float(v) for v in numbers(p.get("rates"), [600, 900, 1200, 1500]) if v > 0))
+    rates = sorted(set(float(v) for v in numbers(p.get("rates"), [300, 500, 700, 900]) if v > 0))
     seeds = max(1, min(20, int(p.get("seeds", 3))))
     hours = max(0.1, min(24.0, float(p.get("hours", 2))))
     warm_min = max(0.0, float(p.get("warmup_min", 10)))
@@ -750,11 +852,14 @@ def sweep(ctx, p, layout, hw):
     ctx.telemetry("sweep", {"phase": "start", "scenarios": B, "fleets": fleets, "rates": rates, "seeds": seeds, "hours": hours,
                             "backend": backend, "kind": kind, "warmup_min": warm_min, "robot_cost_h": cost_h})
     torch.manual_seed(int(p.get("seed", 1)))
-    F = Fleet(layout, B, N, hw, seed=int(p.get("seed", 1)), pick_s=float(p.get("pick_s", 6)), station_s=float(p.get("station_s", 8)))
+    F = Fleet(layout, B, N, hw, seed=int(p.get("seed", 1)), pick_s=float(p.get("pick_s", 10)), station_s=float(p.get("station_s", 15)),
+              speed=float(p.get("robot_speed", 1.2)), battery_h=float(p.get("battery_h", 8)), charge_min=float(p.get("charge_min", 60)),
+              low=float(p.get("charge_below", 25)) / 100.0)
+    tick = F.tick
     F.set_fleet([c[0] for c in combos])
     F.set_rate([c[1] for c in combos])
-    warm = int(warm_min * 60 / TICK_S)
-    steps = int(hours * 3600 / TICK_S)
+    warm = int(warm_min * 60 / tick)
+    steps = int(hours * 3600 / tick)
     total = warm + steps
     t0 = time.time()
     base = None
@@ -772,15 +877,15 @@ def sweep(ctx, p, layout, hw):
             rate = (i + 1) * B / max(el, 1e-6)
             pct = int(100 * (i + 1) / total)
             ctx.progress(pct, "%d of %d steps, %s scenario-steps/s" % (i + 1, total, format(int(rate), ",")))
-            part = summarise(F, base, combos, fleets, rates, cost_h, i + 1 - warm) if i + 1 > warm + 60 else None
-            ctx.telemetry("sweep", {"phase": "running", "step": i + 1, "steps": total, "sim_h": round((i + 1 - warm) * TICK_S / 3600, 3),
+            part = summarise(F, base, combos, fleets, rates, cost_h, (i + 1 - warm) * tick) if i + 1 > warm + 60 else None
+            ctx.telemetry("sweep", {"phase": "running", "step": i + 1, "steps": total, "sim_h": round((i + 1 - warm) * tick / 3600, 3),
                                     "elapsed_s": round(el, 1), "scenario_steps_s": round(rate), "robot_steps_s": round(rate * sum(fleets) / len(fleets)),
                                     "backend": backend, "kind": kind, "rows": part})
     if device.type == "cuda":
         torch.cuda.synchronize()
     wall = time.time() - t0
-    rows = summarise(F, base, combos, fleets, rates, cost_h, steps)
-    cols = ["fleet", "order_rate", "orders_h", "served_pct", "avg_order_s", "p95_order_s", "utilization", "waiting_pct", "backlog", "cost_per_order"]
+    rows = summarise(F, base, combos, fleets, rates, cost_h, steps * tick)
+    cols = ["fleet", "order_rate", "orders_h", "lines_h", "served_pct", "avg_order_s", "p95_order_s", "utilization", "waiting_pct", "charging_pct", "backlog", "cost_per_order"]
     ctx.write_text("results", "fleet_sweep.csv", "\n".join([",".join(cols)] + [",".join(str(r[c]) for c in cols) for r in rows]) + "\n")
     wide = ["fleet," + ",".join("orders_h@%d" % r for r in rates)]
     for f in fleets:
@@ -804,22 +909,24 @@ def sweep(ctx, p, layout, hw):
 
 
 def snapshot(F):
-    return {"done": F.done.clone(), "time": F.done_time.clone(), "hist": F.done_hist.clone(), "busy": F.busy_ticks.clone(),
-            "robot": F.robot_ticks.clone(), "wait": F.wait_ticks.clone()}
+    return {"done": F.done.clone(), "lines": F.lines_done.clone(), "time": F.done_time.clone(), "hist": F.done_hist.clone(),
+            "busy": F.busy_ticks.clone(), "robot": F.robot_ticks.clone(), "wait": F.wait_ticks.clone(), "charge": F.charge_ticks.clone()}
 
 
-def summarise(F, base, combos, fleets, rates, cost_h, steps):
+def summarise(F, base, combos, fleets, rates, cost_h, seconds):
     """Per fleet size and order rate, averaged over the seeds."""
     import torch
     cur = snapshot(F)
     if base is not None:
         cur = {k: cur[k] - base[k] for k in cur}
-    hours = max(steps, 1) * TICK_S / 3600.0
+    hours = max(seconds, 1.0) / 3600.0
     done = cur["done"].cpu().tolist()
     ttime = cur["time"].cpu().tolist()
     hist = cur["hist"].cpu()
     busy = (cur["busy"] / cur["robot"].clamp(min=1)).cpu().tolist()
     wait = (cur["wait"] / cur["robot"].clamp(min=1)).cpu().tolist()
+    charge = (cur["charge"] / cur["robot"].clamp(min=1)).cpu().tolist()
+    lines = cur["lines"].cpu().tolist()
     backlog = (F.q_tail - F.q_head).cpu().tolist()
     groups = {}
     for i, (f, r, s) in enumerate(combos):
@@ -834,6 +941,8 @@ def summarise(F, base, combos, fleets, rates, cost_h, steps):
             cum = torch.cumsum(h, 0)
             p95 = float((cum < 0.95 * cum[-1]).sum()) * 15 + 7.5 if float(cum[-1]) > 0 else 0.0
             rows.append({"fleet": f, "order_rate": int(r), "orders_h": round(per_h, 1),
+                         "lines_h": round(sum(lines[i] for i in ix) / len(ix) / hours, 1),
+                         "charging_pct": round(100 * sum(charge[i] for i in ix) / len(ix), 1),
                          "served_pct": min(100.0, round(100.0 * per_h / r, 1)) if r else 0.0,
                          "avg_order_s": round(sum(ttime[i] for i in ix) / max(1e-6, sum(done[i] for i in ix)), 1),
                          "p95_order_s": round(p95, 0),
