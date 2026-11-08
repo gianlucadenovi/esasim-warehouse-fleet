@@ -1,0 +1,128 @@
+{
+    "esasim": {
+        "kind": "blueprint",
+        "flow_id": 14
+    },
+    "name": "5 · Which layout? (same hall, same orders)",
+    "description": "Six layouts of the same building with the same robots, the very same orders and incidents: order time, driving, waiting and storage side by side, with a plan of each.",
+    "published_version": 0,
+    "updated": "2026-11-08 03:24:41",
+    "graph": {
+        "nodes": [
+            {
+                "id": "layouts",
+                "type": "ws-warehouse-layouts",
+                "x": 0,
+                "y": 120,
+                "params": {
+                    "layouts": "Today: blocks=5 stations=8\n3 long blocks: blocks=3\n9 short blocks: blocks=9\nStations at both ends: stations_at=both\nRandom slotting: slotting=random\n4 stations: stations=4",
+                    "robots": 40,
+                    "order_rate": 500,
+                    "seeds": 3,
+                    "hours": 2,
+                    "warmup_min": 10,
+                    "accelerator": "auto",
+                    "incidents_h": 2,
+                    "seed": 1
+                },
+                "title": "Warehouse layouts"
+            },
+            {
+                "id": "time",
+                "type": "chart",
+                "x": 460,
+                "y": -160,
+                "params": {
+                    "kind": "bars",
+                    "x": "layout",
+                    "y": "avg_order_s",
+                    "title": "Average order time (s): lower is better"
+                },
+                "title": "Order time by layout"
+            },
+            {
+                "id": "travel",
+                "type": "chart",
+                "x": 460,
+                "y": 120,
+                "params": {
+                    "kind": "bars",
+                    "x": "layout",
+                    "y": "m_per_line",
+                    "title": "Metres driven per item: lower is better"
+                },
+                "title": "Driving by layout"
+            },
+            {
+                "id": "plans",
+                "type": "image-view",
+                "x": 460,
+                "y": 400,
+                "params": {
+                    "size": "large"
+                },
+                "title": "Plans: where robots waited (blue little, red a lot)"
+            },
+            {
+                "id": "table",
+                "type": "table-view",
+                "x": 860,
+                "y": 120,
+                "params": {
+                    "rows": 50
+                },
+                "title": "All results"
+            }
+        ],
+        "edges": [
+            {
+                "id": "layouts.chart>time.data",
+                "from": {
+                    "node": "layouts",
+                    "port": "chart"
+                },
+                "to": {
+                    "node": "time",
+                    "port": "data"
+                }
+            },
+            {
+                "id": "layouts.chart>travel.data",
+                "from": {
+                    "node": "layouts",
+                    "port": "chart"
+                },
+                "to": {
+                    "node": "travel",
+                    "port": "data"
+                }
+            },
+            {
+                "id": "layouts.plans>plans.images",
+                "from": {
+                    "node": "layouts",
+                    "port": "plans"
+                },
+                "to": {
+                    "node": "plans",
+                    "port": "images"
+                }
+            },
+            {
+                "id": "layouts.results>table.data",
+                "from": {
+                    "node": "layouts",
+                    "port": "results"
+                },
+                "to": {
+                    "node": "table",
+                    "port": "data"
+                }
+            }
+        ],
+        "notes": [],
+        "dash": {
+            "items": []
+        }
+    }
+}

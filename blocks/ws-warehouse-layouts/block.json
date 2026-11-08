@@ -1,0 +1,255 @@
+{
+    "id": "ws-warehouse-layouts",
+    "version": "1",
+    "name": "Warehouse layouts",
+    "category": "Simulation",
+    "icon": "grid",
+    "side": "backend",
+    "customizable": true,
+    "summary": "Which layout works best in the same building? Several warehouse layouts with the same robots, the very same orders and incidents, simulated and compared: throughput, order time, metres driven, waiting",
+    "help": "Compares warehouse layouts in the same building. Each line of Layouts is one layout in the hall of the Warehouse fleet block (its width from Rack pairs, its depth from Rack blocks × Rack length): blocks=9 cuts the racks into more, shorter blocks with more cross-aisles (shorter trips, less storage), blocks=3 into fewer, longer ones; stations=4 or 12 changes the pack-out stations; stations_at=both splits them between the south and north walls; slotting=random puts popular products anywhere instead of near the stations. Every layout gets the same robots, the very same orders (arrival times and lines) and the same incidents (when, what kind and how long; where depends on the layout), for Simulated hours after a warm-up, once per seed, with routes planned on the machine's accelerator. Results per layout: orders and lines per hour, share of the demand served, average and 95th-percentile order time, metres driven per item, robots busy, waiting, charging, time stopped by faults, incidents, orders left waiting, pick faces and metres of racks (storage). layouts.csv for a Table, layouts_chart.csv for a Chart (bars by layout), a plan of each layout coloured blue to red where robots waited (for an Images view), and layouts_summary.json. Near the robots' limit (Orders per hour) the layouts differ most; well below it they all keep up and differ in order time and driving. To watch one of them, put its line in the Layout setting of Warehouse fleet.",
+    "inputs": [],
+    "outputs": [
+        {
+            "id": "results",
+            "label": "Results",
+            "type": "table",
+            "formats": [
+                "csv"
+            ],
+            "help": "layouts.csv: one row per layout (throughput, order time, metres per item, waiting, storage…)"
+        },
+        {
+            "id": "chart",
+            "label": "For a chart",
+            "type": "table",
+            "formats": [
+                "csv"
+            ],
+            "help": "layouts_chart.csv: orders per hour, order time, metres per item and waiting by layout"
+        },
+        {
+            "id": "plans",
+            "label": "Plans",
+            "type": "files",
+            "formats": [
+                "png",
+                "json"
+            ],
+            "help": "A plan of each layout from above, coloured where robots waited (PNG), and its layout (JSON)"
+        },
+        {
+            "id": "summary",
+            "label": "Summary",
+            "type": "metrics",
+            "formats": [
+                "json"
+            ],
+            "help": "The best layout for throughput, order time and driving, and each layout against the first"
+        }
+    ],
+    "params": [
+        {
+            "key": "layouts",
+            "label": "Layouts",
+            "type": "textarea",
+            "default": "Today: blocks=5 stations=8\n3 long blocks: blocks=3\n9 short blocks: blocks=9\nStations at both ends: stations_at=both\nRandom slotting: slotting=random\n4 stations: stations=4",
+            "help": "One per line, Name: key=value … with blocks (rack blocks from front to back: more blocks, more cross-aisles), stations (pack-out stations), stations_at (south or both), slotting (abc: popular products near the stations, or random). The first is the reference"
+        },
+        {
+            "key": "robots",
+            "label": "Robots",
+            "type": "number",
+            "default": 40,
+            "min": 1,
+            "max": 60
+        },
+        {
+            "key": "order_rate",
+            "label": "Orders per hour",
+            "type": "number",
+            "default": 500,
+            "min": 1,
+            "max": 6000,
+            "help": "Near what the robots can do, the layouts differ most"
+        },
+        {
+            "key": "seeds",
+            "label": "Seeds per layout",
+            "type": "number",
+            "default": 3,
+            "min": 1,
+            "max": 20,
+            "help": "Each seed is another day of orders and incidents, the same for every layout"
+        },
+        {
+            "key": "hours",
+            "label": "Simulated hours",
+            "type": "number",
+            "default": 2,
+            "min": 0.1,
+            "max": 24
+        },
+        {
+            "key": "warmup_min",
+            "label": "Warm-up (simulated minutes, not counted)",
+            "type": "number",
+            "default": 10,
+            "min": 0,
+            "max": 120
+        },
+        {
+            "key": "accelerator",
+            "label": "Accelerator",
+            "type": "select",
+            "default": "auto",
+            "options": [
+                "auto",
+                "CPU",
+                "NVIDIA GPU",
+                "Tenstorrent"
+            ],
+            "help": "auto: Tenstorrent cards, else an NVIDIA GPU, else the CPU of the machine that runs it"
+        },
+        {
+            "key": "rack_pairs",
+            "label": "Rack pairs (sets the hall's width)",
+            "type": "number",
+            "default": 20,
+            "min": 4,
+            "max": 30
+        },
+        {
+            "key": "rack_blocks",
+            "label": "Rack blocks of the reference hall",
+            "type": "number",
+            "default": 5,
+            "min": 1,
+            "max": 8
+        },
+        {
+            "key": "rack_len",
+            "label": "Rack length of the reference hall (m)",
+            "type": "number",
+            "default": 8,
+            "min": 4,
+            "max": 16,
+            "help": "With Rack blocks, sets the hall's depth; every layout fits in that same hall"
+        },
+        {
+            "key": "stations",
+            "label": "Pack-out stations (unless a layout says)",
+            "type": "number",
+            "default": 8,
+            "min": 1,
+            "max": 20
+        },
+        {
+            "key": "pick_s",
+            "label": "Seconds to pick an item",
+            "type": "number",
+            "default": 10,
+            "min": 1,
+            "max": 120
+        },
+        {
+            "key": "station_s",
+            "label": "Seconds to unload at the station",
+            "type": "number",
+            "default": 15,
+            "min": 1,
+            "max": 120
+        },
+        {
+            "key": "robot_speed",
+            "label": "Robot speed (m/s)",
+            "type": "number",
+            "default": 1.2,
+            "min": 0.3,
+            "max": 2
+        },
+        {
+            "key": "battery_h",
+            "label": "Hours on a charge",
+            "type": "number",
+            "default": 8,
+            "min": 0.5,
+            "max": 24
+        },
+        {
+            "key": "charge_min",
+            "label": "Minutes to charge from empty",
+            "type": "number",
+            "default": 60,
+            "min": 5,
+            "max": 600
+        },
+        {
+            "key": "charge_below",
+            "label": "Go to charge below (%)",
+            "type": "number",
+            "default": 25,
+            "min": 5,
+            "max": 80
+        },
+        {
+            "key": "incidents_h",
+            "label": "Incidents per hour",
+            "type": "number",
+            "default": 2,
+            "min": 0,
+            "max": 60
+        },
+        {
+            "key": "fault_share",
+            "label": "Robot faults (% of incidents)",
+            "type": "number",
+            "default": 40,
+            "min": 0,
+            "max": 100
+        },
+        {
+            "key": "response_min",
+            "label": "Minutes until someone comes",
+            "type": "number",
+            "default": 3,
+            "min": 0,
+            "max": 120
+        },
+        {
+            "key": "clear_min",
+            "label": "Minutes to clean up a spill",
+            "type": "number",
+            "default": 4,
+            "min": 0.1,
+            "max": 240
+        },
+        {
+            "key": "repair_min",
+            "label": "Minutes to repair a robot",
+            "type": "number",
+            "default": 8,
+            "min": 0.1,
+            "max": 480
+        },
+        {
+            "key": "seed",
+            "label": "Random seed",
+            "type": "number",
+            "default": 1
+        }
+    ],
+    "hardware": [
+        "cpu",
+        "nvidia",
+        "tenstorrent"
+    ],
+    "packages": [
+        "torch[cuda]",
+        "scipy",
+        "pillow"
+    ],
+    "esasim": {
+        "version": 1
+    }
+}

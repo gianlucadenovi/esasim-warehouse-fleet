@@ -5,8 +5,8 @@
     },
     "name": "1 · Live warehouse",
     "description": "Fifty robots in a goods-to-person warehouse, live in 3D: change orders, robots and aisles while it runs.",
-    "published_version": 4,
-    "updated": "2026-11-08 02:44:29",
+    "published_version": 5,
+    "updated": "2026-11-08 03:24:31",
     "graph": {
         "nodes": [
             {
@@ -28,6 +28,7 @@
                     "speed": "2",
                     "minutes": 20,
                     "accelerator": "auto",
+                    "layout": "",
                     "rack_pairs": 20,
                     "rack_blocks": 5,
                     "rack_len": 8,
@@ -38,6 +39,11 @@
                     "battery_h": 8,
                     "charge_min": 60,
                     "charge_below": 25,
+                    "incidents_h": 2,
+                    "fault_share": 40,
+                    "response_min": 3,
+                    "clear_min": 4,
+                    "repair_min": 8,
                     "seed": 1
                 },
                 "title": "Warehouse fleet (live)"

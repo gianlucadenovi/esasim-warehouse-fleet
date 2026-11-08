@@ -6,10 +6,11 @@ An [EsaSim](https://esacode.com/) project of the workspace Gianluca De Novi's wo
 
 ## Blueprints
 
-- [1 · Live warehouse](blueprints/1-live-warehouse.json) · 5 blocks · version 4
+- [1 · Live warehouse](blueprints/1-live-warehouse.json) · 5 blocks · version 5
 - [2 · How many robots? (fleet-size sweep)](blueprints/2-how-many-robots-fleet-size-sweep.json) · 3 blocks
 - [3 · Same code, any accelerator (CPU vs GPU vs Tenstorrent)](blueprints/3-same-code-any-accelerator-cpu-vs-gpu-vs-tenstorrent.json) · 4 blocks
 - [4 · On Tenstorrent](blueprints/4-on-tenstorrent.json) · 5 blocks
+- [5 · Which layout? (same hall, same orders)](blueprints/5-which-layout-same-hall-same-orders.json) · 5 blocks
 
 ## Workspace blocks it uses
 
@@ -17,5 +18,6 @@ An [EsaSim](https://esacode.com/) project of the workspace Gianluca De Novi's wo
 - [Warehouse fleet](blocks/ws-warehouse-fleet) · version 5
 - [Fleet-size sweep](blocks/ws-fleet-size-sweep) · version 4
 - [Fleet sweep view](blocks/ws-fleet-sweep-view) · version 1
+- [Warehouse layouts](blocks/ws-warehouse-layouts) · version 1
 
 Keys pasted in blocks (secret settings) are not saved here. Datasets, results and the team stay in EsaSim.
