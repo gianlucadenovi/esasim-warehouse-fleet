@@ -5,8 +5,8 @@
     },
     "name": "3 · Same code, any accelerator (CPU vs GPU vs Tenstorrent)",
     "description": "The same sweep on the CPU and on the GPU side by side; add a Tenstorrent machine for the third.",
-    "published_version": 0,
-    "updated": "2026-11-08 02:29:24",
+    "published_version": 1,
+    "updated": "2026-11-08 04:19:19",
     "graph": {
         "nodes": [
             {

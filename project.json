@@ -23,7 +23,7 @@
         {
             "name": "3 · Same code, any accelerator (CPU vs GPU vs Tenstorrent)",
             "file": "blueprints/3-same-code-any-accelerator-cpu-vs-gpu-vs-tenstorrent.json",
-            "published_version": 0,
+            "published_version": 1,
             "nodes": 4
         },
         {
