@@ -6,7 +6,7 @@
     "name": "4 · On Tenstorrent",
     "description": "The live warehouse and the sweep with Accelerator set to Tenstorrent: routes planned on the Tensix cores with TT-NN. Needs a Linux machine with Tenstorrent cards.",
     "published_version": 0,
-    "updated": "2026-11-08 01:10:40",
+    "updated": "2026-11-08 01:37:23",
     "graph": {
         "nodes": [
             {
@@ -38,15 +38,12 @@
             },
             {
                 "id": "view",
-                "type": "ws-warehouse-view",
+                "type": "viewer-3d",
                 "x": 780,
                 "y": 0,
                 "params": {
-                    "quality": "high",
-                    "routes": true,
-                    "heat": false,
-                    "camera": "orbit",
-                    "delay": 2.5
+                    "environment": "studio",
+                    "quality": "high"
                 },
                 "title": "Warehouse in 3D"
             },
@@ -89,25 +86,25 @@
                 }
             },
             {
-                "id": "models.models>view.models",
+                "id": "models.models>view.scene",
                 "from": {
                     "node": "models",
                     "port": "models"
                 },
                 "to": {
                     "node": "view",
-                    "port": "models"
+                    "port": "scene"
                 }
             },
             {
-                "id": "fleet.telemetry>view.live",
+                "id": "fleet.telemetry>view.scene",
                 "from": {
                     "node": "fleet",
                     "port": "telemetry"
                 },
                 "to": {
                     "node": "view",
-                    "port": "live"
+                    "port": "scene"
                 }
             },
             {

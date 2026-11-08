@@ -11,7 +11,7 @@
         {
             "name": "1 · Live warehouse",
             "file": "blueprints/1-live-warehouse.json",
-            "published_version": 2,
+            "published_version": 3,
             "nodes": 5
         },
         {
@@ -43,11 +43,6 @@
             "id": "ws-warehouse-fleet",
             "version": 3,
             "name": "Warehouse fleet"
-        },
-        {
-            "id": "ws-warehouse-view",
-            "version": 1,
-            "name": "Warehouse view"
         },
         {
             "id": "ws-fleet-size-sweep",

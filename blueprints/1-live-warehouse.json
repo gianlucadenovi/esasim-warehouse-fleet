@@ -5,8 +5,8 @@
     },
     "name": "1 · Live warehouse",
     "description": "Fifty robots in a goods-to-person warehouse, live in 3D: change orders, robots and aisles while it runs.",
-    "published_version": 2,
-    "updated": "2026-11-08 01:22:19",
+    "published_version": 3,
+    "updated": "2026-11-08 01:37:43",
     "graph": {
         "nodes": [
             {
@@ -38,15 +38,12 @@
             },
             {
                 "id": "view",
-                "type": "ws-warehouse-view",
+                "type": "viewer-3d",
                 "x": 770,
                 "y": -280,
                 "params": {
-                    "quality": "high",
-                    "routes": true,
-                    "heat": false,
-                    "camera": "orbit",
-                    "delay": 2.5
+                    "environment": "studio",
+                    "quality": "high"
                 },
                 "title": "Warehouse in 3D"
             },
@@ -90,25 +87,25 @@
                 }
             },
             {
-                "id": "models.models>view.models",
+                "id": "models.models>view.scene",
                 "from": {
                     "node": "models",
                     "port": "models"
                 },
                 "to": {
                     "node": "view",
-                    "port": "models"
+                    "port": "scene"
                 }
             },
             {
-                "id": "fleet.telemetry>view.live",
+                "id": "fleet.telemetry>view.scene",
                 "from": {
                     "node": "fleet",
                     "port": "telemetry"
                 },
                 "to": {
                     "node": "view",
-                    "port": "live"
+                    "port": "scene"
                 }
             },
             {
