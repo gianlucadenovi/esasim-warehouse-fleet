@@ -6,7 +6,7 @@
     "name": "4 · On Tenstorrent",
     "description": "The live warehouse and the sweep with Accelerator set to Tenstorrent: routes planned on the Tensix cores with TT-NN. Needs a Linux machine with Tenstorrent cards.",
     "published_version": 0,
-    "updated": "2026-11-08 02:29:29",
+    "updated": "2026-11-08 04:20:16",
     "graph": {
         "nodes": [
             {

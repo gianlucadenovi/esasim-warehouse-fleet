@@ -5,8 +5,8 @@
     },
     "name": "5 · Which layout? (same hall, same orders)",
     "description": "Six layouts of the same building with the same robots, the very same orders and incidents: order time, driving, waiting and storage side by side, with a plan of each.",
-    "published_version": 0,
-    "updated": "2026-11-08 03:24:41",
+    "published_version": 1,
+    "updated": "2026-11-08 04:20:28",
     "graph": {
         "nodes": [
             {
