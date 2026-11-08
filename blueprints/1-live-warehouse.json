@@ -1,0 +1,142 @@
+{
+    "esasim": {
+        "kind": "blueprint",
+        "flow_id": 10
+    },
+    "name": "1 · Live warehouse",
+    "description": "Fifty robots in a goods-to-person warehouse, live in 3D: change orders, robots and aisles while it runs.",
+    "published_version": 1,
+    "updated": "2026-11-08 00:56:34",
+    "graph": {
+        "nodes": [
+            {
+                "id": "models",
+                "type": "ws-warehouse-models",
+                "x": 0,
+                "y": 0,
+                "params": [],
+                "title": "Warehouse models"
+            },
+            {
+                "id": "fleet",
+                "type": "ws-warehouse-fleet",
+                "x": 380,
+                "y": 0,
+                "params": {
+                    "robots": 24,
+                    "order_rate": 900,
+                    "speed": "2",
+                    "minutes": 20,
+                    "accelerator": "auto",
+                    "stations": 6,
+                    "rack_pairs": 9,
+                    "pick_s": 6,
+                    "station_s": 8,
+                    "seed": 1
+                },
+                "title": "Warehouse fleet (live)"
+            },
+            {
+                "id": "view",
+                "type": "ws-warehouse-view",
+                "x": 780,
+                "y": -120,
+                "params": {
+                    "quality": "high",
+                    "routes": true,
+                    "heat": false,
+                    "camera": "orbit",
+                    "delay": 2.5
+                },
+                "title": "Warehouse in 3D"
+            },
+            {
+                "id": "tel",
+                "type": "telemetry",
+                "x": 780,
+                "y": 220,
+                "params": {
+                    "interval": 0.5,
+                    "channels": "kpi",
+                    "keep": 3000
+                },
+                "title": "KPIs for the chart"
+            },
+            {
+                "id": "chart",
+                "type": "chart",
+                "x": 1160,
+                "y": 220,
+                "params": {
+                    "kind": "line",
+                    "x": "t",
+                    "y": "orders_h,backlog",
+                    "channel": "kpi",
+                    "title": "Orders per hour (last 10 min) and orders waiting"
+                },
+                "title": "Orders per hour and orders waiting"
+            }
+        ],
+        "edges": [
+            {
+                "id": "models.models>fleet.kit",
+                "from": {
+                    "node": "models",
+                    "port": "models"
+                },
+                "to": {
+                    "node": "fleet",
+                    "port": "kit"
+                }
+            },
+            {
+                "id": "models.models>view.models",
+                "from": {
+                    "node": "models",
+                    "port": "models"
+                },
+                "to": {
+                    "node": "view",
+                    "port": "models"
+                }
+            },
+            {
+                "id": "fleet.telemetry>view.live",
+                "from": {
+                    "node": "fleet",
+                    "port": "telemetry"
+                },
+                "to": {
+                    "node": "view",
+                    "port": "live"
+                }
+            },
+            {
+                "id": "fleet.telemetry>tel.from",
+                "from": {
+                    "node": "fleet",
+                    "port": "telemetry"
+                },
+                "to": {
+                    "node": "tel",
+                    "port": "from"
+                }
+            },
+            {
+                "id": "tel.stream>chart.data",
+                "from": {
+                    "node": "tel",
+                    "port": "stream"
+                },
+                "to": {
+                    "node": "chart",
+                    "port": "data"
+                }
+            }
+        ],
+        "notes": [],
+        "dash": {
+            "items": []
+        }
+    }
+}
