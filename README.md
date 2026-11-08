@@ -15,7 +15,7 @@ An [EsaSim](https://esacode.com/) project of the workspace Gianluca De Novi's wo
 
 - [Warehouse models](blocks/ws-warehouse-models) · version 1
 - [Warehouse fleet](blocks/ws-warehouse-fleet) · version 5
-- [Fleet-size sweep](blocks/ws-fleet-size-sweep) · version 3
+- [Fleet-size sweep](blocks/ws-fleet-size-sweep) · version 4
 - [Fleet sweep view](blocks/ws-fleet-sweep-view) · version 1
 
 Keys pasted in blocks (secret settings) are not saved here. Datasets, results and the team stay in EsaSim.

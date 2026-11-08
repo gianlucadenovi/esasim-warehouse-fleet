@@ -1,6 +1,6 @@
 # ── EsaSim block ──────────────────────────────────────────────────────
-# Fleet-size sweep (ws-fleet-size-sweep) · version 3 · machine block, Python: def run(ctx)
-# How many robots does the warehouse need? Hundreds of fleet-size × order-rate scenarios with real robot speeds, pick times and batteries, simulated at once as one batch on the CPU, an NVIDIA GPU or Ten
+# Fleet-size sweep (ws-fleet-size-sweep) · version 4 · machine block, Python: def run(ctx)
+# How many robots does the warehouse need? Hundreds of fleet-size × order-rate scenarios with real robot speeds, pick times, batteries and incidents, in any layout, simulated at once as one batch on the
 # Workspace: Gianluca De Novi's workspace · Author: Gianluca De Novi
 # Saved: 2026-11-08
 #
@@ -19,6 +19,7 @@
 #   warmup_min  number    Warm-up (simulated minutes, not counted) = 10
 #   robot_cost_h number    Robot cost per hour ($) = 2.5
 #   accelerator select    Accelerator = "auto" of auto | CPU | NVIDIA GPU | Tenstorrent
+#   layout      text      Layout = ""
 #   rack_pairs  number    Rack pairs = 20
 #   rack_blocks number    Rack blocks = 5
 #   rack_len    number    Rack length (m) = 8
@@ -29,6 +30,11 @@
 #   battery_h   number    Hours on a charge = 8
 #   charge_min  number    Minutes to charge from empty = 60
 #   charge_below number    Go to charge below (%) = 25
+#   incidents_h number    Incidents per hour = 2
+#   fault_share number    Robot faults (% of incidents) = 40
+#   response_min number    Minutes until someone comes = 3
+#   clear_min   number    Minutes to clean up a spill = 4
+#   repair_min  number    Minutes to repair a robot = 8
 #   seed        number    Random seed = 1
 # Runs on  Any machine, NVIDIA GPU, Tenstorrent. Return a dict to fill the "result" output.
 # Packages torch[cuda], scipy (installed by the worker with pip when missing)
@@ -41,40 +47,69 @@ Tenstorrent cards (Accelerator). Gives orders per hour, order time, robot use an
 import json
 import time
 
-# ---- Warehouse fleet engine (shared by Warehouse fleet and Fleet-size sweep) -------------------------------------
+# ---- Warehouse fleet engine (shared by Warehouse fleet, Fleet-size sweep and Warehouse layouts) -----------------
 #
 # A picking warehouse on a 1 m grid, worked by mobile robots and pickers (the collaborative way: the robot brings a
 # tote to the pick faces, a picker puts the items in, the robot takes them to a pack-out station). Rack rows run
-# north-south with one-way aisles between them, cross-aisles and two-lane highways at both ends; stations at the
-# south wall, each with an in-lane (the queue) and an out-lane; docks with chargers along the walls.
-# An order has 1 to 3 lines: the robot drives to each pick face (popular places near the front, ABC), waits while the
-# item goes into its tote, then drives to the least busy station, where the tote is emptied. Batteries run down as
-# robots drive and work; a robot low on charge finishes its order, goes to its dock and charges; idle robots charge
-# at their dock between orders. Times and speeds default to those of real warehouse robots (MiR100: 1.5 m/s at
-# most, about 10 h per charge, 2-3 h to charge; Locus Origin: about 8 h, 50 min to charge; 8-12 s per pick).
+# north-south with one-way aisles between them, cross-aisles between rack blocks and two-lane highways at both ends;
+# pack-out stations at the south wall (or at both ends), each with an in-lane (the queue) and an out-lane; docks with
+# chargers along the walls. The layout is a setting: how many rack blocks (more cross-aisles: shorter trips, less
+# storage), how many stations and where, and where the popular products sit (slotting).
+# An order has 1 to 3 lines: the robot drives to each pick face, waits while the item goes into its tote, then
+# drives to the least busy station, where the tote is emptied. Batteries run down as robots drive and work; a robot
+# low on charge finishes its order, goes to its dock and charges; idle robots charge at their dock between orders.
+# Times and speeds default to those of real warehouse robots (MiR100: 1.5 m/s at most, about 10 h per charge, 2-3 h
+# to charge; Locus Origin: about 8 h, 50 min to charge; 8-12 s per pick).
+# Incidents: a spill or a dropped item closes an aisle cell, a robot stops with a fault where it is; each waits for a
+# person (response time) who then clears it (clearing or repair time); routes are planned again around it.
 #
 # The engine runs B scenarios side by side (B = 1 for the live demo, hundreds for a sweep), each with up to N robots,
 # as tensors: every step is the same dense operations on all robots of all scenarios, on a CPU, an NVIDIA GPU (CUDA)
 # or Tenstorrent cards. Routes come from the distance of every cell to every target, planned with what the machine
 # does best: breadth-first search in compiled code on a CPU (SciPy), wavefront relaxation on an NVIDIA GPU, tile
 # matmuls on the Tensix cores of Tenstorrent cards (TT-NN); and again whenever an aisle is blocked.
+# Orders (arrival times and lines) come from their own random stream, so two layouts given the same seed get the very
+# same orders, and so do the incidents (when, what kind, how long); only where they happen depends on the layout.
 
 E, N_, W_, S_ = 0, 1, 2, 3
 DX = (1, 0, -1, 0)
 DY = (0, 1, 0, -1)
 MODE_IDLE, MODE_TO_PICK, MODE_PICKING, MODE_TO_STATION, MODE_AT_STATION, MODE_TO_CHARGE, MODE_CHARGING, MODE_OFF = range(8)
+MODE_FAULT = 8        # shown for a robot stopped by a fault (it keeps its task and goes on once repaired)
 CELL_M = 1.0          # one grid cell, in metres
+LAYOUT_KEYS = ("blocks", "stations", "stations_at", "slotting", "bay")
+
+
+def fmt_time(s):
+    s = int(round(max(0.0, s)))
+    return "%d:%02d" % (s // 60, s % 60) if s < 3600 else "%d:%02d:%02d" % (s // 3600, s % 3600 // 60, s % 60)
 
 
 class Layout:
-    """The warehouse: grid cells, allowed moves (one-way traffic), racks, pick faces, stations and docks."""
+    """The warehouse: grid cells, allowed moves (one-way traffic), racks, pick faces, stations and docks.
+    pairs: double rack rows across the hall (3 m each); blocks: rack blocks from front to back, with a cross-aisle
+    between two blocks; depth: metres from the first to the last rack row (default: blocks of rack_len); stations:
+    pack-out stations, at the south wall or split between both ends (stations_at); slotting: abc (popular products
+    near the stations) or random."""
 
-    def __init__(self, pairs=20, blocks=5, rack_len=8, stations=8, bay=2):
-        self.pairs, self.blocks, self.rack_len, self.bay = pairs, blocks, rack_len, bay
+    def __init__(self, pairs=20, blocks=5, rack_len=8, stations=8, bay=2, depth=None, stations_at="south",
+                 slotting="abc", name=""):
+        blocks = max(1, int(blocks))
+        both = str(stations_at).strip().lower().startswith("both")
+        self.stations_at = "both" if both else "south"
+        self.slotting = "random" if str(slotting).strip().lower().startswith("rand") else "abc"
+        self.name = str(name or "")
+        depth = int(depth) if depth is not None else blocks * (int(rack_len) + 1) - 1
+        rows = depth - (blocks - 1)                          # rack rows; the others are cross-aisles
+        if rows < 2 * blocks:
+            raise ValueError("%d rack blocks do not fit in %d m from front to back" % (blocks, depth))
+        lens = [rows // blocks + (1 if b < rows % blocks else 0) for b in range(blocks)]
+        bay = max(1, int(bay))
+        self.pairs, self.blocks, self.bay, self.depth, self.rack_len = pairs, blocks, bay, depth, max(lens)
         W = 3 * pairs + 5                                   # x: margin, dock column, aisles and rack pairs, dock column, margin
         y_store = 6                                         # rack rows start here
-        y_top = y_store + blocks * (rack_len + 1) - 1        # first top highway row
-        H = y_top + 3                                        # top highways (2) + dock row
+        y_top = y_store + depth                             # first top highway row
+        H = y_top + (6 if both else 3)                      # top highways (2) + dock row, or + queues and stations
         self.W, self.H, self.C = W, H, W * H
         self.y_store, self.y_top = y_store, y_top
         moves = [[set() for _ in range(W)] for _ in range(H)]
@@ -94,9 +129,13 @@ class Layout:
                     allow(x, y, d)
         allow(1, 5, S_); allow(W - 2, 4, N_)
         allow(1, y_top, N_); allow(W - 2, y_top + 1, S_)
-        # storage: cross-aisles between rack blocks, one-way aisles between rack pairs
-        cross = [y_store + b * (rack_len + 1) + rack_len for b in range(blocks - 1)]
-        self.cross = cross
+        # storage: rack blocks, cross-aisles between them, one-way aisles between rack pairs
+        starts, y = [], y_store
+        for ln in lens:
+            starts.append(y)
+            y += ln + 1
+        cross = [s + ln for s, ln in zip(starts[:-1], lens[:-1])]
+        self.cross, self.block_rows = cross, [[s, ln] for s, ln in zip(starts, lens)]
         for i, y in enumerate(cross):
             d = E if i % 2 == 0 else W_
             for x in range(2, W - 2):
@@ -114,26 +153,34 @@ class Layout:
                 allow(x, 5, N_)                             # enter from the south highway
             else:
                 allow(x, y_top, S_)                          # enter from the north highway
+        offset = {}
         for k in range(pairs):
-            for b in range(blocks):
-                y0 = y_store + b * (rack_len + 1)
+            for y0, ln in zip(starts, lens):
                 for side, x in enumerate((3 + 3 * k, 4 + 3 * k)):
-                    racks.append({"x": x, "y": y0, "len": rack_len, "face": W_ if side == 0 else E, "id": len(racks)})
-                    for y in range(y0, y0 + rack_len):
+                    racks.append({"x": x, "y": y0, "len": ln, "face": W_ if side == 0 else E, "id": len(racks)})
+                    for y in range(y0, y0 + ln):
                         kind[y][x] = "rack"
+                        offset[y] = y - y0
         # pick faces: aisle cells beside a rack, one per bay (a shelf section of `bay` metres)
         picks = []
         for x in aisles:
             for y in range(y_store, y_top):
-                if kind[y][x] == "aisle" and ((y - y_store) % (rack_len + 1)) % max(1, bay) == max(1, bay) // 2:
-                    near = [r for r in racks if r["y"] <= y < r["y"] + rack_len and abs(r["x"] - x) == 1]
+                if kind[y][x] == "aisle" and y in offset and offset[y] % bay == bay // 2:
+                    near = [r for r in racks if r["y"] <= y < r["y"] + r["len"] and abs(r["x"] - x) == 1]
                     if near:
                         picks.append((x, y, [r["id"] for r in near]))
-        # stations: in-lane south from y=4 to the station (y=1), out-lane north back to y=4
-        stations = max(1, min(int(stations), (W - 4) // 3))                # each needs an in-lane and an out-lane
-        st_x = [round(2 + (W - 6) * (i + 0.5) / stations) for i in range(stations)]
-        stations_ = []
-        for x in st_x:
+        # stations, south: in-lane south from the highway (y=4) to the station (y=1), out-lane north back to it;
+        # north (stations_at=both): the same, mirrored, beyond the north highway
+        per_wall = (W - 4) // 3
+        n = max(1, int(stations))
+        n_south = min(per_wall, (n + 1) // 2 if both else n)
+        n_north = min(per_wall, n - n_south) if both else 0
+        stations_, queues, sides, docks = [], [], [], []
+
+        def spread(m):
+            return [round(2 + (W - 6) * (i + 0.5) / m) for i in range(m)] if m else []
+
+        for x in spread(n_south):
             for y in (3, 2):
                 kind[y][x] = "queue"; allow(x, y, S_)
             allow(x, 4, S_)
@@ -141,22 +188,40 @@ class Layout:
             kind[1][x + 1] = "exit"; allow(x + 1, 1, N_)
             for y in (2, 3):
                 kind[y][x + 1] = "exit"; allow(x + 1, y, N_)
-            stations_.append((x, 1))
-        # docks: north wall (from the north highway), west and east walls (from the outer aisles)
-        docks = []
-        for x in range(2, W - 2):
-            if x % 3 == 2:                                  # keep the aisle mouths free
-                continue
-            docks.append((x, H - 1, S_))
+            stations_.append((x, 1)); queues.append([(x, 2), (x, 3)]); sides.append("S")
+        ys = y_top + 4
+        for x in spread(n_north):
+            for y in (y_top + 2, y_top + 3):
+                kind[y][x] = "queue"; allow(x, y, N_)
+            allow(x, y_top + 1, N_)
+            kind[ys][x] = "station"; allow(x, ys, E)
+            kind[ys][x + 1] = "exit"; allow(x + 1, ys, S_)
+            for y in (y_top + 2, y_top + 3):
+                kind[y][x + 1] = "exit"; allow(x + 1, y, S_)
+            stations_.append((x, ys)); queues.append([(x, y_top + 2), (x, y_top + 3)]); sides.append("N")
+        # docks: north wall (or between the north stations), west and east walls (from the outer aisles), south wall
+        # between the stations
+        def between(xs):
+            used = set(xs) | set(x + 1 for x in xs)
+            return [x for x in range(2, W - 2) if x not in used and x - 1 not in used and x + 1 not in used]
+
+        south_x = [x for (x, _), s in zip(stations_, sides) if s == "S"]
+        north_x = [x for (x, _), s in zip(stations_, sides) if s == "N"]
+        if both:
+            for x in between(north_x):
+                docks.append((x, y_top + 2, S_))
+        else:
+            for x in range(2, W - 2):
+                if x % 3 == 2:                              # keep the aisle mouths free
+                    continue
+                docks.append((x, H - 1, S_))
         for y in range(y_store, y_top):
             if kind[y][2] in ("aisle", "cross"):
                 docks.append((1, y, E))
             if kind[y][aisles[-1]] in ("aisle", "cross"):
                 docks.append((W - 2, y, W_))
-        used = set(x for x, _ in stations_) | set(x + 1 for x, _ in stations_)
-        for x in range(2, W - 2):                           # south wall, between the stations
-            if x not in used and x - 1 not in used and x + 1 not in used:
-                docks.append((x, 3, N_))
+        for x in between(south_x):
+            docks.append((x, 3, N_))
         for (x, y, out) in docks:
             kind[y][x] = "dock"
             allow(x, y, out)
@@ -164,10 +229,54 @@ class Layout:
             allow(bx, by, (out + 2) % 4)                    # in from the lane beside it
         self.kind, self.moves = kind, moves
         self.racks, self.picks, self.stations, self.docks = racks, picks, stations_, docks
+        self.queues, self.station_sides = queues, sides
         # targets: picks, then stations, then docks
         self.targets = [(x, y) for x, y, _ in picks] + list(stations_) + [(x, y) for x, y, _ in docks]
         self.n_picks, self.n_stations, self.n_docks = len(picks), len(stations_), len(docks)
+        self.rack_m = sum(r["len"] for r in racks)
         self.blocked = set()
+
+    # -- layouts from a line of text -----------------------------------------------------------------------------
+    @staticmethod
+    def parse(spec):
+        """'Name: blocks=3 stations=8 stations_at=both slotting=random' -> (name, {key: value})."""
+        import re
+        s = str(spec or "").strip()
+        name = ""
+        if ":" in s:
+            name, s = s.split(":", 1)
+        opts = {}
+        for part in re.split(r"[\s,;]+", s.strip()):
+            if not part:
+                continue
+            if "=" not in part:
+                raise ValueError("'%s' is not key=value (keys: %s)" % (part, ", ".join(LAYOUT_KEYS)))
+            k, v = part.split("=", 1)
+            k = k.strip().lower()
+            if k not in LAYOUT_KEYS:
+                raise ValueError("unknown layout setting '%s' (keys: %s)" % (k, ", ".join(LAYOUT_KEYS)))
+            opts[k] = v.strip()
+        return name.strip(), opts
+
+    @classmethod
+    def variant(cls, spec, pairs=20, blocks=5, rack_len=8, stations=8, bay=2):
+        """A layout in the same hall as Layout(pairs, blocks, rack_len, stations): same width and depth of the
+        building, with the settings of `spec` changed."""
+        base = cls(pairs=pairs, blocks=blocks, rack_len=rack_len, stations=stations, bay=bay)
+        name, o = cls.parse(spec)
+        at = o.get("stations_at", "south")
+        top = 6 if str(at).lower().startswith("both") else 3
+        depth = base.H - 6 - top
+        L = cls(pairs=pairs, blocks=int(o.get("blocks", blocks)), stations=int(o.get("stations", stations)),
+                bay=int(o.get("bay", bay)), depth=depth, stations_at=at, slotting=o.get("slotting", "abc"),
+                name=name or spec)
+        return L
+
+    def summary(self):
+        return {"name": self.name, "blocks": self.blocks, "rack_len": self.rack_len, "cross_aisles": len(self.cross),
+                "stations": self.n_stations, "stations_at": self.stations_at, "slotting": self.slotting,
+                "pick_faces": self.n_picks, "rack_m": self.rack_m, "docks": self.n_docks,
+                "width_m": self.W, "depth_m": self.H, "area_m2": self.W * self.H}
 
     def idx(self, x, y):
         return y * self.W + x
@@ -187,20 +296,28 @@ class Layout:
         return nxt
 
     def popularity(self):
-        """ABC: pick faces near the front (stations) are asked for more often."""
+        """Where orders go. abc: pick faces near the stations are asked for more often; random: all alike."""
         import math
         w = []
+        span = max(1, self.y_top - 1 - self.y_store)
         for x, y, _ in self.picks:
-            depth = (y - self.y_store) / max(1, self.y_top - self.y_store)
-            w.append(math.exp(-2.2 * depth) * (1.0 + 0.6 * math.cos(x * 1.7) ** 2))
+            if self.slotting == "random":
+                w.append(1.0)
+                continue
+            d = (y - self.y_store) / span
+            if self.stations_at == "both":
+                d = 2 * min(d, 1 - d)
+            w.append(math.exp(-2.2 * d) * (1.0 + 0.6 * math.cos(x * 1.7) ** 2))
         s = sum(w)
         return [v / s for v in w]
 
-    def check(self):
-        """Every target reaches every other (strongly connected roads)."""
-        nxt = self.neighbours(set())
+    def check(self, blocked=None, targets=None):
+        """Targets (default: all) that cannot reach a station or be reached from it, with `blocked` cells closed
+        (default: none). Empty when the roads hold together."""
         from collections import deque
-        start = self.idx(*self.targets[0])
+        blocked = set() if blocked is None else set(blocked)
+        nxt = self.neighbours(blocked)
+        start = self.idx(*self.stations[0])
         seen = {start}; q = deque([start])
         while q:
             c = q.popleft()
@@ -218,8 +335,12 @@ class Layout:
             for n in rev.get(c, []):
                 if n not in back:
                     back.add(n); q.append(n)
-        bad = [t for t in self.targets if self.idx(*t) not in seen or self.idx(*t) not in back]
-        return bad
+        targets = self.targets if targets is None else targets
+        return [t for t in targets if tuple(t) not in blocked and (self.idx(*t) not in seen or self.idx(*t) not in back)]
+
+    def cuts_off(self, cells):
+        """True when closing `cells` (with what is closed already) would cut a station or a dock off."""
+        return bool(self.check(set(self.blocked) | set(cells), self.targets[self.n_picks:]))
 
     def describe(self):
         """The layout for the 3D view (esasim.warehouse/1)."""
@@ -231,14 +352,60 @@ class Layout:
                     m |= 1 << d
                 dirs.append("0123456789abcdef"[m])
         code = {"wall": ".", "highway": "h", "cross": "c", "aisle": "a", "rack": "r", "queue": "q", "station": "s", "exit": "x", "dock": "d"}
-        return {"format": "esasim.warehouse/1", "cell_m": CELL_M, "w": self.W, "h": self.H,
-                "kinds": "".join(code[self.kind[y][x]] for y in range(self.H) for x in range(self.W)),
-                "moves": "".join(dirs),
-                "racks": [[r["x"], r["y"], r["len"], r["face"]] for r in self.racks],
-                "stations": [list(s) for s in self.stations], "docks": [list(d) for d in self.docks],
-                "aisles": self.aisles, "cross": self.cross, "store": [self.y_store, self.y_top],
-                "targets": len(self.targets), "picks": self.n_picks,
-                "blocked": sorted([list(b) for b in self.blocked])}
+        d = {"format": "esasim.warehouse/1", "cell_m": CELL_M, "w": self.W, "h": self.H,
+             "kinds": "".join(code[self.kind[y][x]] for y in range(self.H) for x in range(self.W)),
+             "moves": "".join(dirs),
+             "racks": [[r["x"], r["y"], r["len"], r["face"]] for r in self.racks],
+             "stations": [list(s) for s in self.stations], "station_sides": self.station_sides,
+             "queues": [[list(c) for c in q] for q in self.queues], "docks": [list(d) for d in self.docks],
+             "aisles": self.aisles, "cross": self.cross, "store": [self.y_store, self.y_top],
+             "targets": len(self.targets), "picks": self.n_picks,
+             "blocked": sorted([list(b) for b in self.blocked])}
+        d["layout"] = self.summary()
+        return d
+
+    def plan(self, path, title="", lines=(), heat=None, scale=8):
+        """A picture of the layout from above (PNG): racks, aisles, stations, docks, and where robots waited (heat,
+        one value per cell)."""
+        from PIL import Image, ImageDraw, ImageFont
+        W, H, s, top = self.W, self.H, scale, 30 + 16 * len(lines)
+        img = Image.new("RGB", (W * s + 20, H * s + top + 10), (15, 19, 26))
+        dr = ImageDraw.Draw(img)
+        col = {"wall": (15, 19, 26), "highway": (58, 64, 74), "cross": (52, 58, 68), "aisle": (46, 52, 62),
+               "rack": (200, 160, 60), "queue": (40, 90, 120), "station": (56, 189, 248), "exit": (40, 70, 90),
+               "dock": (52, 160, 120)}
+        hv = None
+        if heat is not None:
+            top_v = max(max(heat), 1e-9)
+            hv = [v / top_v for v in heat]
+        for y in range(H):
+            for x in range(W):
+                k = self.kind[y][x]
+                c = col[k]
+                if hv is not None and k not in ("rack", "wall") and hv[y * W + x] > 0.04:
+                    c = heat_rgb(hv[y * W + x] ** 0.5)
+                X, Y = 10 + x * s, top + (H - 1 - y) * s
+                dr.rectangle([X, Y, X + s - 1, Y + s - 1], fill=c)
+        try:
+            font = ImageFont.load_default(size=14)
+        except TypeError:
+            font = ImageFont.load_default()
+        dr.text((10, 6), title or self.name, fill=(235, 238, 242), font=font)
+        for i, ln in enumerate(lines):
+            dr.text((10, 24 + 16 * i), ln, fill=(170, 178, 190), font=font)
+        img.save(path)
+        return path
+
+
+def heat_rgb(v):
+    """Blue (little) -> yellow -> orange -> red (a lot), v in 0..1."""
+    stops = [(0.0, (37, 99, 235)), (0.4, (250, 204, 21)), (0.7, (249, 115, 22)), (1.0, (220, 38, 38))]
+    v = min(1.0, max(0.0, v))
+    for (a, ca), (b, cb) in zip(stops, stops[1:]):
+        if v <= b:
+            u = (v - a) / (b - a)
+            return tuple(int(ca[i] + (cb[i] - ca[i]) * u) for i in range(3))
+    return stops[-1][1]
 
 
 class TTPlanner:
@@ -497,6 +664,7 @@ class Fleet:
         self.low, self.full = float(low), float(full)
         self.Q = queue
         torch.manual_seed(seed)
+        self.g_orders = torch.Generator().manual_seed(int(seed) * 1000003 + 17)   # orders: the same for every layout
         self.lower = torch.tril(torch.ones(N, N, dtype=torch.bool), diagonal=-1).to(dev)     # [i, j]: j has priority over i
         tgt_cells = [layout.idx(x, y) for x, y in layout.targets]
         self.tgt_cell = torch.tensor(tgt_cells + [self.C], dtype=torch.long, device=dev)
@@ -512,13 +680,14 @@ class Fleet:
         for i, (x, y) in enumerate(layout.targets):
             if i >= layout.n_picks:
                 owner[layout.idx(x, y)] = i
-        for i, (x, y) in enumerate(layout.stations):
-            for qy in (2, 3):
-                owner[layout.idx(x, qy)] = layout.n_picks + i
+        for i, q in enumerate(layout.queues):
+            for (qx, qy) in q:
+                owner[layout.idx(qx, qy)] = layout.n_picks + i
         self.owner = torch.tensor(owner, dtype=torch.long, device=dev)
         self.station_ids = torch.arange(layout.n_picks, layout.n_picks + layout.n_stations, device=dev)
         self.dock_ids = torch.arange(layout.n_picks + layout.n_stations, self.T, device=dev)
         self.timing = {}
+        self.user_blocked = set(layout.blocked)
         self.replan()
         # state
         z = lambda dt=torch.long: torch.zeros(B, N, dtype=dt, device=dev)
@@ -530,7 +699,9 @@ class Fleet:
         self.home = z()
         self.active = z(torch.bool)
         self.leaving = z(torch.bool)
+        self.fault = z(torch.bool)
         self.q_t = torch.zeros(B, queue, dtype=torch.float32, device=dev)
+        self.q_lines = torch.ones(B, queue, dtype=torch.long, device=dev)
         self.q_head = torch.zeros(B, dtype=torch.long, device=dev)
         self.q_tail = torch.zeros(B, dtype=torch.long, device=dev)
         self.rate = torch.zeros(B, dtype=torch.float32, device=dev)            # orders per hour
@@ -538,10 +709,13 @@ class Fleet:
         self.steps = 0
         # statistics
         f = lambda: torch.zeros(B, dtype=torch.float32, device=dev)
-        self.done, self.lines_done, self.done_time = f(), f(), f()
+        self.done, self.lines_done, self.done_time, self.moved = f(), f(), f(), f()
         self.done_hist = torch.zeros(B, 64, dtype=torch.float32, device=dev)  # order times, 15 s bins
-        self.busy_ticks, self.robot_ticks, self.wait_ticks, self.charge_ticks, self.dropped = f(), f(), f(), f(), f()
+        self.busy_ticks, self.robot_ticks, self.wait_ticks, self.charge_ticks, self.fault_ticks, self.dropped = f(), f(), f(), f(), f(), f()
         self.heat = torch.zeros(B, self.C + 1, dtype=torch.float32, device=dev) if B == 1 else None
+        self.heat_total = torch.zeros(self.C + 1, dtype=torch.float32, device=dev)    # where robots of scenario 0 waited
+        self.events = []
+        self.set_incidents(0)
         self.set_fleet([0] * B)
 
     # -- routes --------------------------------------------------------------------------------------------------
@@ -607,7 +781,8 @@ class Fleet:
         for name in ("timer", "wait", "lines_left", "items"):
             setattr(self, name, torch.where(new, torch.zeros_like(getattr(self, name)), getattr(self, name)))
         # robots arrive with the charge they have (as at the start of a shift): some go to charge first
-        fresh = 0.2 + 0.75 * torch.rand(self.B, self.N, device=dev)
+        g = torch.Generator().manual_seed(int(self.g_orders.initial_seed()) + 7)
+        fresh = (0.2 + 0.75 * torch.rand(self.B, self.N, generator=g)).to(dev)
         self.battery = torch.where(new, fresh, self.battery)
         self.leaving = self.active & ~want
         self.active = self.active | want
@@ -618,9 +793,113 @@ class Fleet:
         self.rate = torch.as_tensor(rates, dtype=torch.float32, device=self.dev).reshape(self.B).clone()
 
     def set_blocked(self, cells):
-        """Close cells (a pallet left in an aisle): routes are planned again; orders for pick faces there wait."""
-        self.L.blocked = set(tuple(c) for c in cells)
-        return self.replan()
+        """Close cells by hand (a pallet left in an aisle), on top of incidents: routes are planned again; orders for
+        pick faces there wait."""
+        self.user_blocked = set(tuple(c) for c in cells)
+        return self._apply_blocked()
+
+    def _apply_blocked(self):
+        self.L.blocked = set(self.user_blocked) | set(tuple(i["cell"]) for i in self.incidents if i["closes"])
+        ms = self.replan()
+        self.retarget()
+        return ms
+
+    # -- incidents -----------------------------------------------------------------------------------------------
+    def set_incidents(self, per_h=0.0, fault_share=0.4, response_min=3.0, clear_min=4.0, repair_min=8.0, seed=1):
+        """Incidents at random (Poisson, per_h an hour): a spill or a dropped item closes an aisle cell, or (a
+        fault_share of them) a working robot stops where it is. Each waits for a person (response_min on average)
+        who then cleans up (clear_min) or repairs the robot (repair_min); times vary (gamma, shape 2). When, what and
+        how long come from their own random stream (the same for every layout); where depends on the layout."""
+        import random
+        self.inc_rate = max(0.0, float(per_h))
+        self.inc_fault_share = min(1.0, max(0.0, float(fault_share)))
+        self.inc_resp, self.inc_clear, self.inc_repair = max(0.0, float(response_min)), max(0.1, float(clear_min)), max(0.1, float(repair_min))
+        self.inc_rng = random.Random(int(seed) * 7919 + 3)
+        self.cell_rng = random.Random(int(seed) * 104729 + 5)
+        self.incidents = getattr(self, "incidents", [])
+        self.inc_count = getattr(self, "inc_count", 0)
+        self.inc_next = self.t + self.inc_rng.expovariate(self.inc_rate / 3600.0) if self.inc_rate > 0 else float("inf")
+
+    def _gamma(self, mean):
+        return self.inc_rng.gammavariate(2.0, mean / 2.0) * 60.0 if mean > 0 else 0.0
+
+    def _event(self, text, **extra):
+        e = dict({"t": round(self.t, 1), "text": text}, **extra)
+        self.events.append(e)
+        return e
+
+    def drain_events(self):
+        ev, self.events = self.events, []
+        return ev
+
+    def _incidents_step(self):
+        t = self.t
+        for inc in [i for i in self.incidents if t >= i["until"]]:            # cleared
+            self.incidents.remove(inc)
+            if inc["kind"] == "fault":
+                self.fault[:, inc["robot"]] = False
+                what = "Robot %d back at work after %s (technician %s, repair %s)" % (inc["robot"] + 1, fmt_time(t - inc["since"]), fmt_time(inc["help_at"] - inc["since"]), fmt_time(inc["until"] - inc["help_at"]))
+            else:
+                what = "Aisle at %s clear again after %s (response %s, cleaning %s)" % (list(inc["cell"]), fmt_time(t - inc["since"]), fmt_time(inc["help_at"] - inc["since"]), fmt_time(inc["until"] - inc["help_at"]))
+            ms = self._apply_blocked() if inc["closes"] else 0.0
+            self._event(what + (", routes planned again in %.0f ms" % ms if inc["closes"] else ""), kind="cleared", incident=inc["id"], minutes=round((t - inc["since"]) / 60, 2))
+        while t >= self.inc_next:
+            r = self.inc_rng
+            fault = r.random() < self.inc_fault_share
+            resp = self._gamma(self.inc_resp)
+            work = self._gamma(self.inc_repair if fault else self.inc_clear)
+            robot_u = r.random()
+            self.inc_next += r.expovariate(self.inc_rate / 3600.0)
+            if fault:
+                self._start_fault(robot_u, resp, work)
+            else:
+                self._start_spill(resp, work)
+
+    def _start_spill(self, resp, work):
+        L, rng = self.L, self.cell_rng
+        busy = set(self.pos[0].cpu().tolist()) if self.B == 1 else set()
+        cand = [(x, y) for y in range(L.H) for x in range(L.W) if L.kind[y][x] in ("aisle", "cross") and (x, y) not in L.blocked]
+        for _ in range(40):
+            c = cand[rng.randrange(len(cand))]
+            if L.idx(*c) in busy or L.cuts_off([c]):
+                continue
+            self.inc_count += 1
+            inc = {"id": self.inc_count, "kind": "spill", "cell": c, "closes": True, "since": self.t,
+                   "help_at": self.t + resp, "until": self.t + resp + work, "robot": -1}
+            self.incidents.append(inc)
+            ms = self._apply_blocked()
+            self._event("Spill in the aisle at %s: closed, routes planned again in %.0f ms; someone is on the way" % (list(c), ms),
+                        kind="incident", incident=inc["id"], cell=list(c))
+            return inc
+        return None
+
+    def _start_fault(self, robot_u, resp, work):
+        """A working robot stops where it is (in scenario 0 the next one that is driving, from a number drawn at
+        random; the same robot number in the other scenarios)."""
+        import torch
+        moving = ((self.mode[0] == MODE_TO_PICK) | (self.mode[0] == MODE_TO_STATION)) & self.active[0] & ~self.fault[0]
+        ids = torch.nonzero(moving).flatten().cpu().tolist()
+        if not ids:
+            return None
+        start = int(robot_u * self.N)
+        rid = min(ids, key=lambda i: (i - start) % self.N)
+        cell = int(self.pos[0, rid])
+        c = (cell % self.L.W, cell // self.L.W)
+        closes = self.B == 1 and self.L.kind[c[1]][c[0]] in ("aisle", "cross", "highway") and not self.L.cuts_off([c])
+        self.inc_count += 1
+        inc = {"id": self.inc_count, "kind": "fault", "cell": c, "closes": closes, "since": self.t,
+               "help_at": self.t + resp, "until": self.t + resp + work, "robot": rid}
+        self.incidents.append(inc)
+        self.fault[:, rid] = self.active[:, rid]
+        ms = self._apply_blocked() if closes else 0.0
+        self._event("Robot %d stopped with a fault at %s; a technician is on the way%s" % (rid + 1, list(c), (", routes planned around it in %.0f ms" % ms) if closes else ""),
+                    kind="incident", incident=inc["id"], cell=list(c), robot=rid + 1)
+        return inc
+
+    def incidents_now(self):
+        return [{"id": i["id"], "kind": i["kind"], "cell": list(i["cell"]), "since": round(i["since"], 1),
+                 "help_at": round(i["help_at"], 1), "until": round(i["until"], 1), "robot": i["robot"] + 1 if i["robot"] >= 0 else None}
+                for i in self.incidents]
 
     def _sample(self, u, cdf, top):
         return (u[:, :, None] >= cdf[None, None, :]).long().sum(2).clamp(max=top)
@@ -638,14 +917,20 @@ class Fleet:
         B, N, C, dev = self.B, self.N, self.C, self.dev
         t, tick = self.t, self.tick
         full = lambda m: torch.full_like(self.mode, m)
-        # orders arrive (Poisson, as 4 Bernoulli draws per step)
+        if self.incidents or t >= self.inc_next:
+            self._incidents_step()
+        frozen = self.fault
+        # orders arrive (Poisson, as 4 Bernoulli draws per step) with 1-3 lines each, from the orders' own stream
+        u = torch.rand(B, 8, generator=self.g_orders).to(dev)
         p = (self.rate * tick / 3600.0 / 4.0).clamp(max=1.0)
-        arrivals = (torch.rand(B, 4, device=dev) < p[:, None]).long()
+        arrivals = (u[:, :4] < p[:, None]).long()
+        nl = self._sample(u[:, 4:], self.lines_cdf, self.lines_cdf.numel() - 1) + 1      # [B, 4]
         qpos = torch.arange(self.Q, device=dev)[None, :]
         for k in range(4):
             slot = (self.q_tail % self.Q)[:, None] == qpos
             write = slot & (arrivals[:, k:k + 1] > 0)
             self.q_t = torch.where(write, torch.full_like(self.q_t, t), self.q_t)
+            self.q_lines = torch.where(write, nl[:, k:k + 1].expand(-1, self.Q), self.q_lines)
             self.q_tail = self.q_tail + arrivals[:, k]
         overflow = (self.q_tail - self.q_head - self.Q).clamp(min=0)
         self.dropped = self.dropped + overflow.float()
@@ -653,13 +938,13 @@ class Fleet:
         pending = self.q_tail - self.q_head
         # robots no longer wanted leave once parked at their dock
         at_home = self.pos == self.tgt_cell[self.home]
-        gone = self.leaving & at_home & ((self.mode == MODE_IDLE) | (self.mode == MODE_CHARGING))
+        gone = self.leaving & at_home & ((self.mode == MODE_IDLE) | (self.mode == MODE_CHARGING)) & ~frozen
         self.active = self.active & ~gone
         self.leaving = self.leaving & ~gone
         act = self.active
         self.pos = torch.where(gone, torch.full_like(self.pos, C), self.pos)
         # idle robots with enough charge take the oldest orders (lowest robot number first)
-        idle = act & ~self.leaving & (self.mode == MODE_IDLE) & (self.battery >= self.low)
+        idle = act & ~self.leaving & ~frozen & (self.mode == MODE_IDLE) & (self.battery >= self.low)
         rank = torch.cumsum(idle.long(), 1) - 1
         take = idle & (rank < pending[:, None])
         pick, ok = self._new_pick(B, N, C)
@@ -668,12 +953,11 @@ class Fleet:
         self.order_t = torch.where(take, torch.gather(self.q_t, 1, q_idx), self.order_t)
         self.tgt = torch.where(take, pick, self.tgt)
         self.mode = torch.where(take, full(MODE_TO_PICK), self.mode)
-        nlines = self._sample(torch.rand(B, N, device=dev), self.lines_cdf, self.lines_cdf.numel() - 1) + 1
-        self.lines_left = torch.where(take, nlines, self.lines_left)
+        self.lines_left = torch.where(take, torch.gather(self.q_lines, 1, q_idx), self.lines_left)
         self.items = torch.where(take, torch.zeros_like(self.items), self.items)
         self.q_head = self.q_head + take.long().sum(1)
         # arrivals at targets
-        at = act & (self.pos == self.tgt_cell[self.tgt])
+        at = act & ~frozen & (self.pos == self.tgt_cell[self.tgt])
         start_pick = at & (self.mode == MODE_TO_PICK)
         self.mode = torch.where(start_pick, full(MODE_PICKING), self.mode)
         self.timer = torch.where(start_pick, torch.full_like(self.timer, self.pick_ticks), self.timer)
@@ -682,7 +966,7 @@ class Fleet:
         self.timer = torch.where(start_st, torch.full_like(self.timer, self.station_ticks), self.timer)
         start_ch = at & (self.mode == MODE_TO_CHARGE)
         self.mode = torch.where(start_ch, full(MODE_CHARGING), self.mode)
-        dwell = act & ((self.mode == MODE_PICKING) | (self.mode == MODE_AT_STATION))
+        dwell = act & ~frozen & ((self.mode == MODE_PICKING) | (self.mode == MODE_AT_STATION))
         self.timer = torch.where(dwell, self.timer - 1, self.timer)
         # an item picked: the next line of the order, or off to the least busy station
         picked = dwell & (self.mode == MODE_PICKING) & (self.timer <= 0)
@@ -712,18 +996,18 @@ class Fleet:
         # after an order: low on charge -> to the dock to charge, else idle (waiting for an order, back at the dock)
         low = served & (self.battery < self.low)
         self.mode = torch.where(low, full(MODE_TO_CHARGE), torch.where(served, full(MODE_IDLE), self.mode))
-        idle_low = act & (self.mode == MODE_IDLE) & (self.battery < self.low)
+        idle_low = act & ~frozen & (self.mode == MODE_IDLE) & (self.battery < self.low)
         self.mode = torch.where(idle_low, full(MODE_TO_CHARGE), self.mode)
         homeward = (self.mode == MODE_IDLE) | (self.mode == MODE_TO_CHARGE) | (self.mode == MODE_CHARGING)
         self.tgt = torch.where(homeward, self.home, self.tgt)
         # charging on the dock: full -> waiting for orders again; idle robots on their dock charge too
-        on_dock = act & (self.pos == self.tgt_cell[self.home])
+        on_dock = act & ~frozen & (self.pos == self.tgt_cell[self.home])
         charging = on_dock & ((self.mode == MODE_CHARGING) | (self.mode == MODE_IDLE))
         self.battery = torch.where(charging, (self.battery + self.charge_step).clamp(max=1.0), self.battery)
         done_charging = act & (self.mode == MODE_CHARGING) & (self.battery >= self.full)
         self.mode = torch.where(done_charging, full(MODE_IDLE), self.mode)
         # movement: the best next cell towards the target, turning first when needed
-        moving = act & ((self.mode == MODE_TO_PICK) | (self.mode == MODE_TO_STATION) | (self.mode == MODE_IDLE) | (self.mode == MODE_TO_CHARGE)) & (self.pos != self.tgt_cell[self.tgt])
+        moving = act & ~frozen & ((self.mode == MODE_TO_PICK) | (self.mode == MODE_TO_STATION) | (self.mode == MODE_IDLE) | (self.mode == MODE_TO_CHARGE)) & (self.pos != self.tgt_cell[self.tgt])
         nb = self.nxt[self.pos.clamp(max=C)]                                       # [B, N, 4]
         cost = self.D.reshape(-1)[(self.tgt[:, :, None] * (C + 1) + nb)]           # [B, N, 4]
         dirs = torch.arange(4, device=dev)[None, None, :]
@@ -736,7 +1020,7 @@ class Fleet:
         cost = torch.where(flow & taken, cost + 40.0, cost)
         stuck = (self.wait > 10)[:, :, None]
         best = cost.argmin(2, keepdim=True)
-        cost = torch.where(stuck & (dirs == best), cost + 50.0, cost)              # stuck a while: try another way
+        cost = torch.where(stuck & (dirs == best) & taken, cost + 50.0, cost)      # stuck behind a robot: try another way
         want = cost.argmin(2)
         ok = torch.gather(cost, 2, want[:, :, None])[:, :, 0] < 1e5
         moving = moving & ok
@@ -759,6 +1043,9 @@ class Fleet:
         self.robot_ticks = self.robot_ticks + act.float().sum(1)
         self.wait_ticks = self.wait_ticks + blocked_now.float().sum(1)
         self.charge_ticks = self.charge_ticks + (act & ((self.mode == MODE_CHARGING) | (self.mode == MODE_TO_CHARGE))).float().sum(1)
+        self.fault_ticks = self.fault_ticks + (act & frozen).float().sum(1)
+        self.moved = self.moved + move.float().sum(1)
+        self.heat_total = self.heat_total.index_add(0, self.pos[0], blocked_now[0].float())
         if self.heat is not None:
             self.heat = self.heat * 0.995
             self.heat = self.heat.index_add(1, self.pos[0], blocked_now.float())
@@ -784,9 +1071,10 @@ class Fleet:
     # -- reading out ---------------------------------------------------------------------------------------------
     def snapshot(self, b=0):
         """Robots of scenario b: [cell, heading, mode, target cell, battery %, items in the tote] each
-        (cell C = not on the floor)."""
+        (cell C = not on the floor; mode MODE_FAULT while stopped by a fault)."""
         import torch
-        m = torch.where(self.active[b], self.mode[b], torch.full_like(self.mode[b], MODE_OFF))
+        m = torch.where(self.fault[b], torch.full_like(self.mode[b], MODE_FAULT), self.mode[b])
+        m = torch.where(self.active[b], m, torch.full_like(self.mode[b], MODE_OFF))
         pos = torch.where(self.active[b], self.pos[b], torch.full_like(self.pos[b], self.C))
         tc = self.tgt_cell[self.tgt[b]]
         bat = (self.battery[b] * 100).round().long()
@@ -797,12 +1085,15 @@ class Fleet:
         busy = (self.busy_ticks / self.robot_ticks.clamp(min=1)).cpu()
         hours = max(self.t, 1e-6) / 3600.0
         done = self.done.cpu()
-        return {"done": done.tolist(), "per_hour": (done / hours).tolist(), "lines": self.lines_done.cpu().tolist(),
+        lines = self.lines_done.cpu()
+        return {"done": done.tolist(), "per_hour": (done / hours).tolist(), "lines": lines.tolist(),
                 "avg_order_s": (self.done_time.cpu() / done.clamp(min=1)).tolist(),
                 "utilization": busy.tolist(), "backlog": (self.q_tail - self.q_head).cpu().tolist(),
                 "wait_share": (self.wait_ticks / self.robot_ticks.clamp(min=1)).cpu().tolist(),
                 "charge_share": (self.charge_ticks / self.robot_ticks.clamp(min=1)).cpu().tolist(),
-                "hist": self.done_hist.cpu().tolist()}
+                "fault_share": (self.fault_ticks / self.robot_ticks.clamp(min=1)).cpu().tolist(),
+                "m_per_line": (self.moved.cpu() * CELL_M / lines.clamp(min=1)).tolist(),
+                "incidents": self.inc_count, "hist": self.done_hist.cpu().tolist()}
 
 
 def numbers(text, default):
@@ -827,8 +1118,13 @@ def numbers(text, default):
 def run(ctx):
     import torch
     p = ctx.params
-    layout = Layout(pairs=int(p.get("rack_pairs", 20)), blocks=int(p.get("rack_blocks", 5)), rack_len=int(p.get("rack_len", 8)),
-                    stations=int(p.get("stations", 8)))
+    base = dict(pairs=int(p.get("rack_pairs", 20)), blocks=int(p.get("rack_blocks", 5)), rack_len=int(p.get("rack_len", 8)),
+                stations=int(p.get("stations", 8)))
+    spec = str(p.get("layout") or "").strip()
+    try:
+        layout = Layout.variant(spec, **base) if spec else Layout(**base)
+    except ValueError as e:
+        raise RuntimeError("Layout: %s" % e)
     hw = pick_device(p.get("accelerator", "auto"), ctx.log)
     try:
         return sweep(ctx, p, layout, hw)
@@ -856,6 +1152,9 @@ def sweep(ctx, p, layout, hw):
               speed=float(p.get("robot_speed", 1.2)), battery_h=float(p.get("battery_h", 8)), charge_min=float(p.get("charge_min", 60)),
               low=float(p.get("charge_below", 25)) / 100.0)
     tick = F.tick
+    F.set_incidents(per_h=float(p.get("incidents_h", 2)), fault_share=float(p.get("fault_share", 40)) / 100.0,
+                    response_min=float(p.get("response_min", 3)), clear_min=float(p.get("clear_min", 4)),
+                    repair_min=float(p.get("repair_min", 8)), seed=int(p.get("seed", 1)))
     F.set_fleet([c[0] for c in combos])
     F.set_rate([c[1] for c in combos])
     warm = int(warm_min * 60 / tick)
@@ -866,6 +1165,8 @@ def sweep(ctx, p, layout, hw):
     last = 0.0
     for i in range(total):
         F.step()
+        for e in F.drain_events():
+            ctx.log("[%s] %s" % (fmt_time(e["t"]), e["text"]))
         if i + 1 == warm:
             base = snapshot(F)
         now = time.time()

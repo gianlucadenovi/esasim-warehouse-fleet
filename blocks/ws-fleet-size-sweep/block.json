@@ -6,8 +6,8 @@
     "icon": "grid",
     "side": "backend",
     "customizable": true,
-    "summary": "How many robots does the warehouse need? Hundreds of fleet-size × order-rate scenarios with real robot speeds, pick times and batteries, simulated at once as one batch on the CPU, an NVIDIA GPU or Ten",
-    "help": "Simulates every combination of Fleet sizes, Order rates and Seeds in the warehouse of the Warehouse fleet block (same hall, robots, times and batteries), for the same simulated hours (after a warm-up), all at once: the robots of all scenarios are one batch of tensors. Fleet sizes and order rates are lists (10,20,30) or ranges (10-60/10 = from 10 to 60 by 10). Accelerator: CPU plans routes with SciPy and steps with PyTorch; NVIDIA GPU runs everything on the GPU; Tenstorrent plans the routes on the cards with TT-NN (Tensix tile matmuls) and runs the scenarios' steps on the cards too when PyTorch/XLA for Tenstorrent (tt-xla) is installed, else on the CPU beside them; the machine with the cards needs TT-NN in the worker's Python (pip install ttnn). auto uses Tenstorrent cards when the machine has them, else an NVIDIA GPU, else the CPU. For each fleet size and order rate, averaged over the seeds: orders and lines per hour delivered, share of the demand served, average and 95th-percentile order time, robots busy, time spent waiting, time spent charging, orders left waiting, and robot cost per order (Robot cost per hour). Live telemetry (channel sweep) carries the results as they form, for the Fleet sweep view; the results are also in fleet_sweep.csv, throughput_by_fleet.csv (for a Chart) and sweep_summary.json (the cheapest fleet that keeps up with each order rate, and the speed of the machine).",
+    "summary": "How many robots does the warehouse need? Hundreds of fleet-size × order-rate scenarios with real robot speeds, pick times, batteries and incidents, in any layout, simulated at once as one batch on the",
+    "help": "Simulates every combination of Fleet sizes, Order rates and Seeds in the warehouse of the Warehouse fleet block (same hall, robots, times, batteries and incidents; Layout changes it as there), for the same simulated hours (after a warm-up), all at once: the robots of all scenarios are one batch of tensors. Fleet sizes and order rates are lists (10,20,30) or ranges (10-60/10 = from 10 to 60 by 10). Incidents are the same in every scenario (all scenarios share the routes): a spill closes the same aisle cell in all of them, and a robot stopped by a fault blocks the way of those behind it until it is repaired. Accelerator: CPU plans routes with SciPy and steps with PyTorch; NVIDIA GPU runs everything on the GPU; Tenstorrent plans the routes on the cards with TT-NN (Tensix tile matmuls) and runs the scenarios' steps on the cards too when PyTorch/XLA for Tenstorrent (tt-xla) is installed, else on the CPU beside them; the machine with the cards needs TT-NN in the worker's Python (pip install ttnn). auto uses Tenstorrent cards when the machine has them, else an NVIDIA GPU, else the CPU. For each fleet size and order rate, averaged over the seeds: orders and lines per hour delivered, share of the demand served, average and 95th-percentile order time, robots busy, time spent waiting, time spent charging, orders left waiting, and robot cost per order (Robot cost per hour). Live telemetry (channel sweep) carries the results as they form, for the Fleet sweep view; the results are also in fleet_sweep.csv, throughput_by_fleet.csv (for a Chart) and sweep_summary.json (the cheapest fleet that keeps up with each order rate, and the speed of the machine).",
     "inputs": [],
     "outputs": [
         {
@@ -101,6 +101,13 @@
             "help": "auto: Tenstorrent cards, else an NVIDIA GPU, else the CPU of the machine that runs it"
         },
         {
+            "key": "layout",
+            "label": "Layout",
+            "type": "text",
+            "default": "",
+            "help": "Changes to the layout in the same hall, as key=value: blocks=3, stations=6, stations_at=both, slotting=random. Empty: the hall below as it is"
+        },
+        {
             "key": "rack_pairs",
             "label": "Rack pairs",
             "type": "number",
@@ -181,6 +188,47 @@
             "max": 80
         },
         {
+            "key": "incidents_h",
+            "label": "Incidents per hour",
+            "type": "number",
+            "default": 2,
+            "min": 0,
+            "max": 60,
+            "help": "Spills or dropped items that close an aisle, and robot faults; 0 for none"
+        },
+        {
+            "key": "fault_share",
+            "label": "Robot faults (% of incidents)",
+            "type": "number",
+            "default": 40,
+            "min": 0,
+            "max": 100
+        },
+        {
+            "key": "response_min",
+            "label": "Minutes until someone comes",
+            "type": "number",
+            "default": 3,
+            "min": 0,
+            "max": 120
+        },
+        {
+            "key": "clear_min",
+            "label": "Minutes to clean up a spill",
+            "type": "number",
+            "default": 4,
+            "min": 0.1,
+            "max": 240
+        },
+        {
+            "key": "repair_min",
+            "label": "Minutes to repair a robot",
+            "type": "number",
+            "default": 8,
+            "min": 0.1,
+            "max": 480
+        },
+        {
             "key": "seed",
             "label": "Random seed",
             "type": "number",
@@ -197,6 +245,6 @@
         "scipy"
     ],
     "esasim": {
-        "version": 3
+        "version": 4
     }
 }
