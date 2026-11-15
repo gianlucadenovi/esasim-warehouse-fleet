@@ -54,4 +54,10 @@ An [EsaSim](https://esacode.com/) project of the workspace Gianluca De Novi's wo
 - [Warehouse models](blocks/ws-warehouse-models) · version 1
 - [Fleet sweep view](blocks/ws-fleet-sweep-view) · version 1
 
-Keys pasted in blocks (secret settings) are not saved here. Datasets, results and the team stay in EsaSim.
+### Assets
+
+The files the project's views draw with (3D models, textures, sounds), in [assets/](assets/):
+
+- [textures/esacode-logo.png](assets/textures/esacode-logo.png) · 25 KB
+
+Keys pasted in blocks (secret settings) are not saved here, nor are the team and the results of runs.
