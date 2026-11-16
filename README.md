@@ -1,3 +1,7 @@
+<!-- esasim: cover -->
+![Warehouse Fleet](assets/cover.jpg)
+<!-- /esasim: cover -->
+
 <div align="center">
 
 <!-- Banner: upload a picture named banner.png under Data › Readme pictures; it shows here. -->

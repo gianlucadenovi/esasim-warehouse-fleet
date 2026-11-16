@@ -7,6 +7,8 @@
     "name": "Warehouse Fleet",
     "description": "From one robot to fifty: a goods-to-person warehouse simulated live in 3D, and a fleet-size sweep that finds how many robots it needs, on CPU, NVIDIA GPU or Tenstorrent.",
     "type": "robotics",
+    "cover": "upload",
+    "cover_file": "assets/cover.jpg",
     "readme": null,
     "blueprints": [
         {
