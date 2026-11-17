@@ -26,14 +26,14 @@
 
 ## What you need
 
-- A machine with the EsaSim worker (Project > Compute); it runs on any machine, faster with: NVIDIA GPU, Tenstorrent.
+- A computer with the EsaSim worker (Project > Compute); it runs on any worker, faster with: NVIDIA GPU, Tenstorrent.
 - Python packages, installed by the worker the first time: `numpy`, `trimesh`, `pycollada`, `pillow`, `scipy`, `torch`.
 
 ## How to run it
 
-1. Under **Compute**, check that a machine is available for this project.
-2. Press **Run**, choose the machine, and follow the run on the flow's **View** page.
-3. The files it made are under **Results**; they stay on the machine until you save or download them.
+1. Under **Compute**, check that a worker is available for this project.
+2. Press **Run**, choose the worker, and follow the run on the flow's **View** page.
+3. The files it made are under **Results**; they stay on the worker until you save or download them.
 
 ## What you get
 
