@@ -63,5 +63,20 @@ An [EsaSim](https://esacode.com/) project of the workspace Gianluca De Novi's wo
 The files the project's views draw with (3D models, textures, sounds), in [assets/](assets/):
 
 - [textures/esacode-logo.png](assets/textures/esacode-logo.png) · 25 KB
+- [warehouse-kit/sources/aws/LICENSE](assets/warehouse-kit/sources/aws/LICENSE) · 927 B
+- [warehouse-kit/sources/mir/LICENSE](assets/warehouse-kit/sources/mir/LICENSE) · 1.5 KB
+- [warehouse-kit/sources/mir/mir_100_base.stl](assets/warehouse-kit/sources/mir/mir_100_base.stl) · 1.8 MB
+- [warehouse-kit/v6/LICENSES-warehouse-models.txt](assets/warehouse-kit/v6/LICENSES-warehouse-models.txt) · 2.8 KB
+- [warehouse-kit/v6/amr.glb](assets/warehouse-kit/v6/amr.glb) · 572 KB
+- [warehouse-kit/v6/bin.glb](assets/warehouse-kit/v6/bin.glb) · 209 KB
+- [warehouse-kit/v6/desk.glb](assets/warehouse-kit/v6/desk.glb) · 672 KB
+- [warehouse-kit/v6/goods_a.glb](assets/warehouse-kit/v6/goods_a.glb) · 768 KB
+- [warehouse-kit/v6/goods_c.glb](assets/warehouse-kit/v6/goods_c.glb) · 234 KB
+- [warehouse-kit/v6/goods_d.glb](assets/warehouse-kit/v6/goods_d.glb) · 226 KB
+- [warehouse-kit/v6/kit.json](assets/warehouse-kit/v6/kit.json) · 1.9 KB
+- [warehouse-kit/v6/pallet_jack.glb](assets/warehouse-kit/v6/pallet_jack.glb) · 806 KB
+- [warehouse-kit/v6/rack_d.glb](assets/warehouse-kit/v6/rack_d.glb) · 801 KB
+- [warehouse-kit/v6/rack_e.glb](assets/warehouse-kit/v6/rack_e.glb) · 439 KB
+- [warehouse-kit/v6/rack_f.glb](assets/warehouse-kit/v6/rack_f.glb) · 635 KB
 
 Keys pasted in blocks (secret settings) are not saved here, nor are the team and the results of runs.

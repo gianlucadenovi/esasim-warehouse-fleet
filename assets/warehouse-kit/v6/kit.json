@@ -1,0 +1,147 @@
+{
+ "kind": "esasim.warehouse-kit/1",
+ "version": 6,
+ "models": {
+  "rack_d": {
+   "file": "rack_d.glb",
+   "size_m": [
+    3.917,
+    2.613,
+    0.88
+   ],
+   "min": [
+    -1.959,
+    -0.0,
+    -0.44
+   ],
+   "triangles": 657
+  },
+  "rack_e": {
+   "file": "rack_e.glb",
+   "size_m": [
+    3.917,
+    2.613,
+    0.88
+   ],
+   "min": [
+    -1.959,
+    0.03,
+    -0.44
+   ],
+   "triangles": 632
+  },
+  "rack_f": {
+   "file": "rack_f.glb",
+   "size_m": [
+    2.117,
+    6.525,
+    18.047
+   ],
+   "min": [
+    -1.058,
+    -0.0,
+    -9.023
+   ],
+   "triangles": 2926
+  },
+  "pallet_jack": {
+   "file": "pallet_jack.glb",
+   "size_m": [
+    1.152,
+    0.964,
+    0.532
+   ],
+   "min": [
+    -0.508,
+    0.013,
+    -0.251
+   ],
+   "triangles": 1883
+  },
+  "goods_a": {
+   "file": "goods_a.glb",
+   "size_m": [
+    2.146,
+    1.058,
+    1.983
+   ],
+   "min": [
+    -1.073,
+    0.044,
+    -0.991
+   ],
+   "triangles": 292
+  },
+  "goods_c": {
+   "file": "goods_c.glb",
+   "size_m": [
+    1.769,
+    1.725,
+    2.047
+   ],
+   "min": [
+    -0.885,
+    0.042,
+    -1.023
+   ],
+   "triangles": 336
+  },
+  "goods_d": {
+   "file": "goods_d.glb",
+   "size_m": [
+    0.996,
+    1.475,
+    1.502
+   ],
+   "min": [
+    -0.498,
+    0.348,
+    -0.751
+   ],
+   "triangles": 224
+  },
+  "desk": {
+   "file": "desk.glb",
+   "size_m": [
+    0.882,
+    1.437,
+    1.555
+   ],
+   "min": [
+    -0.441,
+    -0.0,
+    -0.778
+   ],
+   "triangles": 677
+  },
+  "bin": {
+   "file": "bin.glb",
+   "size_m": [
+    1.446,
+    1.268,
+    0.892
+   ],
+   "min": [
+    -0.723,
+    0.037,
+    -0.446
+   ],
+   "triangles": 1031
+  },
+  "amr": {
+   "file": "amr.glb",
+   "size_m": [
+    0.896,
+    0.332,
+    0.584
+   ],
+   "min": [
+    -0.448,
+    0.012,
+    -0.292
+   ],
+   "triangles": 17056,
+   "original": 37622
+  }
+ }
+}

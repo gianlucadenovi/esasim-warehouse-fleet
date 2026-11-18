@@ -12,7 +12,112 @@
             "sha256": "5165bee68f3a011323761eb87cfae64a9f5076c092c6f27f2627a1a1820c1091",
             "zip": "assets/textures/esacode-logo.png",
             "in": "repo"
+        },
+        {
+            "path": "warehouse-kit/sources/aws/LICENSE",
+            "size": 927,
+            "sha256": "ef47b4ae2a1a8d38ef87b38dc5927967e7b472ffa3f7d125e89dbc8353a1e7af",
+            "zip": "assets/warehouse-kit/sources/aws/LICENSE",
+            "in": "repo"
+        },
+        {
+            "path": "warehouse-kit/sources/mir/LICENSE",
+            "size": 1530,
+            "sha256": "dc378981f4c4c11f510513796dceea8c70d83f19c0be7390c384b50860b8ffe7",
+            "zip": "assets/warehouse-kit/sources/mir/LICENSE",
+            "in": "repo"
+        },
+        {
+            "path": "warehouse-kit/sources/mir/mir_100_base.stl",
+            "size": 1881184,
+            "sha256": "36ef0329a4f6c457b7aea2473d5131d7a1e431ab7bb5ffbb7402b2f9e629a660",
+            "zip": "assets/warehouse-kit/sources/mir/mir_100_base.stl",
+            "in": "repo"
+        },
+        {
+            "path": "warehouse-kit/v6/LICENSES-warehouse-models.txt",
+            "size": 2884,
+            "sha256": "3a251563e92d21d78a3bc58f0e04411fab0feb0c487ae1ecd195d324531a3739",
+            "zip": "assets/warehouse-kit/v6/LICENSES-warehouse-models.txt",
+            "in": "repo"
+        },
+        {
+            "path": "warehouse-kit/v6/amr.glb",
+            "size": 585416,
+            "sha256": "75680d72634ec3a71d46cbf51622cc766374df3cda0dc9360166eedbd18f527a",
+            "zip": "assets/warehouse-kit/v6/amr.glb",
+            "in": "repo"
+        },
+        {
+            "path": "warehouse-kit/v6/bin.glb",
+            "size": 213704,
+            "sha256": "63e4be58521c9e893fd94091165733a33e2d177674984a9953a128bd7b1d3a34",
+            "zip": "assets/warehouse-kit/v6/bin.glb",
+            "in": "repo"
+        },
+        {
+            "path": "warehouse-kit/v6/desk.glb",
+            "size": 687628,
+            "sha256": "d3cfb0c2917dd58286588b7da4de4686db4adb960b5981ead537586076fac74e",
+            "zip": "assets/warehouse-kit/v6/desk.glb",
+            "in": "repo"
+        },
+        {
+            "path": "warehouse-kit/v6/goods_a.glb",
+            "size": 786736,
+            "sha256": "7100927aeeb8c363ba205e4df1f5a51582d91ae7b3ba81f7684ae3a403934351",
+            "zip": "assets/warehouse-kit/v6/goods_a.glb",
+            "in": "repo"
+        },
+        {
+            "path": "warehouse-kit/v6/goods_c.glb",
+            "size": 239708,
+            "sha256": "5b6ff69a43c383f83ba7771613d2ce6826f68bc47944442386c56fe7e32be2d6",
+            "zip": "assets/warehouse-kit/v6/goods_c.glb",
+            "in": "repo"
+        },
+        {
+            "path": "warehouse-kit/v6/goods_d.glb",
+            "size": 231704,
+            "sha256": "0ccbafb2dedcb841fb9fc4d8e0230836052b46939056344379ef33a300fc1610",
+            "zip": "assets/warehouse-kit/v6/goods_d.glb",
+            "in": "repo"
+        },
+        {
+            "path": "warehouse-kit/v6/kit.json",
+            "size": 1924,
+            "sha256": "a1ee6471105237c81ebd3792fb78b5cf9590eda905e9f1a74b51bb45ee5acd68",
+            "zip": "assets/warehouse-kit/v6/kit.json",
+            "in": "repo"
+        },
+        {
+            "path": "warehouse-kit/v6/pallet_jack.glb",
+            "size": 825404,
+            "sha256": "0de21b93d778b5a8d0befd48896e198fb643d04e6c6472d168eb88dc5b8a81c0",
+            "zip": "assets/warehouse-kit/v6/pallet_jack.glb",
+            "in": "repo"
+        },
+        {
+            "path": "warehouse-kit/v6/rack_d.glb",
+            "size": 819800,
+            "sha256": "cc226fcd58d8ce0627ee962b238ea821050aa9462a9433eae89779980626825d",
+            "zip": "assets/warehouse-kit/v6/rack_d.glb",
+            "in": "repo"
+        },
+        {
+            "path": "warehouse-kit/v6/rack_e.glb",
+            "size": 449356,
+            "sha256": "5fa686850416370382b748dbf9e936dab1e8d0700ee0bd651957314383c77f46",
+            "zip": "assets/warehouse-kit/v6/rack_e.glb",
+            "in": "repo"
+        },
+        {
+            "path": "warehouse-kit/v6/rack_f.glb",
+            "size": 649968,
+            "sha256": "fb01e317548e0994503211b45ff6b75e58667fc255f5bc8b05d0a7b8617d9e50",
+            "zip": "assets/warehouse-kit/v6/rack_f.glb",
+            "in": "repo"
         }
     ],
-    "saved": "2026-11-15T06:50:27+00:00"
+    "saved": "2026-11-18T22:49:51+00:00"
 }
